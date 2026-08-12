@@ -1,0 +1,73 @@
+{
+  "name": "@mupt-ai/dari-router",
+  "version": "0.1.0",
+  "description": "End-to-end TypeScript framework for routing across LLMs with built-in Pi AI execution and pluggable policies and executors.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mupt-ai/dari-router.git"
+  },
+  "homepage": "https://docs.dari.dev/framework/overview",
+  "bugs": {
+    "url": "https://github.com/mupt-ai/dari-router/issues"
+  },
+  "keywords": [
+    "llm",
+    "router",
+    "llm-router",
+    "model-routing",
+    "openai",
+    "anthropic",
+    "chat-completions",
+    "dari"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./policy-engine": {
+      "types": "./dist/policy-engine.d.ts",
+      "default": "./dist/policy-engine.js"
+    },
+    "./protocols": {
+      "types": "./dist/protocols.d.ts",
+      "default": "./dist/protocols.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "bun run typecheck && bun test && bun run build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "example": "bun run examples/create_router.ts",
+    "example:pi": "bun run examples/pi_runtime.ts",
+    "example:dari-policy": "bun run examples/dari_policy.ts",
+    "example:decision-pipeline": "bun run examples/basic_route.ts",
+    "example:lease-stores": "bun run examples/lease_stores.ts"
+  },
+  "dependencies": {
+    "@mupt-ai/pi-ai": "0.80.6-mupt.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.4",
+    "@types/node": "^24.10.2",
+    "typescript": "^5.6.3"
+  }
+}

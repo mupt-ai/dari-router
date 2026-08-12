@@ -1,0 +1,8 @@
+name: Example SLM Router
+enabled_models:
+  - openai/gpt-5.6-sol
+  - anthropic/claude-sonnet-5
+provider_key_sources:
+  openai: managed
+  anthropic: managed
+routing_strategy: slm

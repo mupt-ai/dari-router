@@ -1,0 +1,10 @@
+name: Example BYOK Router
+enabled_models:
+  - openai/gpt-5.6-sol
+  - fireworks/zai-org/GLM-5.2
+provider_key_sources:
+  openai: managed
+  fireworks: user
+provider_key_envs:
+  fireworks: FIREWORKS_API_KEY
+routing_strategy: slm
