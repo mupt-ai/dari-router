@@ -95,6 +95,16 @@ export function normalizeRouterModels<Metadata>(
         );
       }
     }
+    if (model.providerModelId !== undefined && (
+      typeof model.providerModelId !== "string"
+      || !model.providerModelId.trim()
+      || model.providerModelId !== model.providerModelId.trim()
+    )) {
+      throw configurationError(
+        `Model '${model.id}' providerModelId must be a trimmed non-empty string.`,
+        "model_provider_model_id_invalid",
+      );
+    }
 
     const api = model.api ?? model.executor;
     if (typeof api !== "string" || !api.trim() || api !== api.trim()) {
@@ -115,6 +125,7 @@ export function normalizeRouterModels<Metadata>(
       id: model.id,
       executor: model.executor,
       provider,
+      ...(model.providerModelId === undefined ? {} : { providerModelId: model.providerModelId }),
       api,
       reasoningEfforts,
       defaultReasoningEffort,

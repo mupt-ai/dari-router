@@ -1,7 +1,10 @@
 name: Example BYOK Router
 enabled_models:
   - openai/gpt-5.6-sol
-  - fireworks/zai-org/GLM-5.2
+  - zai-org/GLM-5.2
+model_providers:
+  openai/gpt-5.6-sol: openai
+  zai-org/GLM-5.2: fireworks
 provider_key_sources:
   openai: managed
   fireworks: user

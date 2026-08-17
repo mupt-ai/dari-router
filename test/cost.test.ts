@@ -29,12 +29,17 @@ const PRICING: Record<string, { input: number; output: number; cacheRead: number
   "anthropic/claude-fable-5": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
   "openai/gpt-5.2": { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
   "openai/gpt-5.6-sol": { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
-  "fireworks/zai-org/GLM-5.2": { input: 1.4, output: 4.4, cacheRead: 0.14, cacheWrite: 0 },
+  "zai-org/GLM-5.2": { input: 1.4, output: 4.4, cacheRead: 0.14, cacheWrite: 0 },
   "fireworks/deepseek-ai/DeepSeek-V4-Pro": { input: 0.435, output: 0.87, cacheRead: 0, cacheWrite: 0 },
   "meta/muse-spark-1.1": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
 };
 
 const pricing: PricingLookup = (model) => PRICING[model] ?? null;
+
+function modelProvider(model: string): string {
+  if (model === "zai-org/GLM-5.2") return "fireworks";
+  return model.slice(0, model.indexOf("/")).toLowerCase();
+}
 
 const OUTPUT_TOKENS: Record<ReasoningEffort, number> = {
   off: 1200,
@@ -47,10 +52,12 @@ const OUTPUT_TOKENS: Record<ReasoningEffort, number> = {
 };
 
 function hit(overrides: Partial<RouterPrefixHit> = {}): RouterPrefixHit {
+  const model = overrides.model ?? "anthropic/claude-sonnet-4-6";
   return {
     hash: "h2",
     conversation_id: "c-1",
-    model: "anthropic/claude-sonnet-4-6",
+    model,
+    provider: modelProvider(model),
     message_depth: 2,
     provider_block_depth: 2,
     prompt_tokens: 2000,
@@ -116,6 +123,7 @@ function estimates(args: {
     averageOutputTokensByModel:
       args.averageOutputTokensByModel ??
       Object.fromEntries(models.map((model) => [model, OUTPUT_TOKENS])),
+    modelProvider,
   });
 }
 
@@ -314,7 +322,7 @@ test("openai fixed-turn estimates cross the cache threshold after short prompts"
 });
 
 test("fixed-turn estimates stay finite for very long prompts across cache providers", () => {
-  const candidates = ["openai/gpt-5.2", "anthropic/claude-sonnet-4-6", "fireworks/zai-org/GLM-5.2"];
+  const candidates = ["openai/gpt-5.2", "anthropic/claude-sonnet-4-6", "zai-org/GLM-5.2"];
   const results = estimates({
     candidates,
     hits: [],
@@ -396,8 +404,8 @@ test("fixed-turn estimates keep thinking-level variants distinct", () => {
 
 test("fireworks fixed-turn estimates use cached-input pricing without write fees", () => {
   const [fireworks] = estimates({
-    candidates: ["fireworks/zai-org/GLM-5.2"],
-    hits: [hit({ model: "fireworks/zai-org/GLM-5.2", prompt_tokens: 2000 })],
+    candidates: ["zai-org/GLM-5.2"],
+    hits: [hit({ model: "zai-org/GLM-5.2", prompt_tokens: 2000 })],
     newTailChars: 4000,
     reasoningEffort: "off",
   });
@@ -559,15 +567,42 @@ test("override lookups normalize the provider prefix like providerForModel", () 
 test("shared-scope models reuse one warm prefix across reasoning buckets", () => {
   // Fireworks caching ignored reasoning entirely in live validation.
   const [glm] = estimates({
-    candidates: ["fireworks/zai-org/GLM-5.2"],
-    hits: [hit({ model: "fireworks/zai-org/GLM-5.2", prompt_tokens: 2000, reasoning_bucket: "off" })],
+    candidates: ["zai-org/GLM-5.2"],
+    hits: [hit({ model: "zai-org/GLM-5.2", prompt_tokens: 2000, reasoning_bucket: "off" })],
     reasoningEffort: "high",
   });
   expect(glm.warm_tokens).toBe(2000);
 });
 
+test("cache warmth does not cross providers for the same canonical model", () => {
+  const model = "zai-org/GLM-5.2";
+  const candidate = { model, reasoningEffort: "medium" as const };
+  const [estimate] = estimateCandidateCosts({
+    candidates: [candidate],
+    hits: sharedChainHits(["h1", "h2"], [hit({
+      model,
+      provider: "openrouter",
+      prompt_tokens: 2000,
+      reasoning_bucket: "medium",
+    })]),
+    incomingProviderBlockCountFor: () => 2,
+    promptEstimatesByCandidate: new Map([[routingCandidateKey(candidate), {
+      chars: 4000,
+      reusesStoredPromptTokens: true,
+    }]]),
+    toolChoiceFp: TOOL_FP,
+    responseFormatFp: FORMAT_FP,
+    pricing,
+    averageOutputTokensByModel: { [model]: OUTPUT_TOKENS },
+    modelProvider: () => "fireworks",
+  });
+
+  expect(estimate.warm_tokens).toBe(0);
+  expect(estimate.est_prompt_tokens).toBe(1000);
+});
+
 test("three-provider switch history keeps fixed-turn estimates provider-scoped", () => {
-  const candidates = ["openai/gpt-5.2", "anthropic/claude-sonnet-4-6", "fireworks/zai-org/GLM-5.2"];
+  const candidates = ["openai/gpt-5.2", "anthropic/claude-sonnet-4-6", "zai-org/GLM-5.2"];
   const results = estimates({
     candidates,
     hits: [
@@ -585,7 +620,7 @@ test("three-provider switch history keeps fixed-turn estimates provider-scoped",
       }),
       hit({
         hash: "h6",
-        model: "fireworks/zai-org/GLM-5.2",
+        model: "zai-org/GLM-5.2",
         message_depth: 6,
         prompt_tokens: 1200,
       }),
@@ -599,7 +634,7 @@ test("three-provider switch history keeps fixed-turn estimates provider-scoped",
   const byModel = new Map(results.map((item) => [item.model, item]));
   const openai = byModel.get("openai/gpt-5.2");
   const anthropic = byModel.get("anthropic/claude-sonnet-4-6");
-  const fireworks = byModel.get("fireworks/zai-org/GLM-5.2");
+  const fireworks = byModel.get("zai-org/GLM-5.2");
 
   expect(openai).toMatchObject({
     warm_tokens: 2048,
@@ -623,7 +658,7 @@ test("three-provider switch history keeps fixed-turn estimates provider-scoped",
 
 test("foreign-tokenizer history adds a margin to the provider's full prompt estimate", () => {
   const [glm] = estimates({
-    candidates: ["fireworks/zai-org/GLM-5.2"],
+    candidates: ["zai-org/GLM-5.2"],
     hits: [
       hit({
         hash: "h2",
@@ -895,7 +930,7 @@ test("a cold OpenAI partition is priced at the write rate, not the input rate", 
 });
 
 test("a provider that does not bill writes still prices fresh tokens as input", () => {
-  const candidate = { model: "fireworks/zai-org/GLM-5.2", reasoningEffort: "high" as ReasoningEffort };
+  const candidate = { model: "zai-org/GLM-5.2", reasoningEffort: "high" as ReasoningEffort };
   const [estimate] = estimateCandidateCosts({
     candidates: [candidate],
     hits: sharedChainHits(["h1"], []),

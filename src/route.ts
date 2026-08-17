@@ -13,8 +13,8 @@ import {
   type CandidatePromptEstimate,
   type PricingLookup,
 } from "./cost.js";
-import { warmPrefixHits } from "./cache_behavior.js";
-import type { ReasoningCacheScopeLookup } from "./cache_scope.js";
+import { prefixHitMatchesProvider, warmPrefixHits } from "./cache_behavior.js";
+import { reasoningCacheScope, type ReasoningCacheScopeLookup } from "./cache_scope.js";
 import { RouterCoreError } from "./errors.js";
 import {
   activeLeaseFromHit,
@@ -181,6 +181,8 @@ function prepareCandidatesWithAccounting(
     modelThinkingLevels: input.modelThinkingLevels,
   });
   const warnings: RoutePreparationWarning[] = [];
+  const cacheScope = input.cacheScope ?? ((model: string) =>
+    reasoningCacheScope(model, input.metadataLookup(model).provider));
 
   let hits: ChainHits = { perModel: new Map(), perModelBuckets: new Map() };
   let costEstimates: CandidateCostEstimate[] = [];
@@ -199,9 +201,17 @@ function prepareCandidatesWithAccounting(
     // estimation and the freshness touch must reflect what the provider cache
     // can actually re-read. Identity: either tier over every recent hit — a
     // stale or loose-only match still names the same conversation.
+    const providersByCandidate = new Map(
+      compatible.candidates.map(({ model }) => [model, input.metadataLookup(model).provider]),
+    );
+    const providerCompatibleWarmHits = warmPrefixHits(input.prefixHits, input.nowMs)
+      .filter((hit) => {
+        const provider = providersByCandidate.get(hit.model);
+        return provider !== undefined && prefixHitMatchesProvider(hit, provider);
+      });
     hits = deriveModelChainHits(
       input.chainsByModel,
-      warmPrefixHits(input.prefixHits, input.nowMs),
+      providerCompatibleWarmHits,
     );
     identityHit = deepestIdentityHit(
       input.chainsByModel,
@@ -240,7 +250,7 @@ function prepareCandidatesWithAccounting(
           hits,
           candidate.model,
           candidate.reasoningEffort,
-          input.cacheScope,
+          cacheScope,
         );
         const candidateAnchor = promptAnchorFor({
           accounting: promptAccounting,
@@ -269,7 +279,8 @@ function prepareCandidatesWithAccounting(
       responseFormatFp: input.responseFormatFp,
       pricing: input.pricing,
       averageOutputTokensByModel: input.averageOutputTokensByModel,
-      cacheScope: input.cacheScope,
+      cacheScope,
+      modelProvider: (model) => input.metadataLookup(model).provider,
     });
   } catch (error) {
     warnings.push({ phase: "cost_estimation", error });
@@ -328,6 +339,7 @@ export type RouteInput = CandidatePreparationSharedInput & RouteAccountingInput 
 };
 
 export type PreparedRoute = CandidatePreparation & {
+  modelProvider: (model: string) => string;
   fallbackConfig: RouteFallbackConfig;
   // Null when the custom strategy is selected but no custom rule
   // configuration resolved; hosts surface their own error for that state.
@@ -346,8 +358,9 @@ export function prepareRoute(input: RouteInput): PreparedRoute {
     requiresDifferentProvider: input.fallbackRequiresDifferentProvider !== false,
   };
   const custom = resolution.strategy === "custom" ? resolution.custom : undefined;
+  const modelProvider = (model: string) => input.metadataLookup(model).provider;
   if (custom === null) {
-    return { ...preparation, fallbackConfig, selectorPreparation: null };
+    return { ...preparation, modelProvider, fallbackConfig, selectorPreparation: null };
   }
   const selectorPreparation = buildSizedSelectorRequest({
     candidates: resolution.candidates,
@@ -363,7 +376,7 @@ export function prepareRoute(input: RouteInput): PreparedRoute {
     modelFallbackEnabled: fallbackConfig.enabled,
     fallbackRequiresDifferentProvider: fallbackConfig.requiresDifferentProvider,
   });
-  return { ...preparation, fallbackConfig, selectorPreparation };
+  return { ...preparation, modelProvider, fallbackConfig, selectorPreparation };
 }
 
 export type RouteResult = {
@@ -375,7 +388,7 @@ export type RouteResult = {
 // Parses and validates the selector's raw output against the prepared
 // candidate set and fallback policy.
 export function finalizeRoute(
-  prepared: Pick<PreparedRoute, "candidateResolution" | "fallbackConfig">,
+  prepared: Pick<PreparedRoute, "candidateResolution" | "fallbackConfig" | "modelProvider">,
   selectorOutputText: string,
 ): RouteResult {
   const parsed = parseSelectorDecision(selectorOutputText);
@@ -387,6 +400,7 @@ export function finalizeRoute(
     candidates: prepared.candidateResolution.candidates,
     modelFallbackEnabled: prepared.fallbackConfig.enabled,
     fallbackRequiresDifferentProvider: prepared.fallbackConfig.requiresDifferentProvider,
+    providerForModel: prepared.modelProvider,
   });
   return {
     decision: parsed.decision,

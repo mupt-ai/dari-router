@@ -95,6 +95,7 @@ export function validateSelectorDecisions(args: {
   candidates: RoutingCandidate[];
   modelFallbackEnabled?: boolean;
   fallbackRequiresDifferentProvider?: boolean;
+  providerForModel?: (model: string) => string;
 }): void {
   const selected = {
     model: args.decision.selectedModel,
@@ -107,11 +108,12 @@ export function validateSelectorDecisions(args: {
       "selector_invalid_candidate",
     );
   }
+  const resolveProvider = args.providerForModel ?? providerForModel;
   const eligibleFallbacks = args.candidates.filter(
     (candidate) =>
       candidate.model !== selected.model &&
       (!args.fallbackRequiresDifferentProvider ||
-        providerForModel(candidate.model) !== providerForModel(selected.model)),
+        resolveProvider(candidate.model) !== resolveProvider(selected.model)),
   );
   if (args.modelFallbackEnabled) {
     if (!args.fallbackDecision && eligibleFallbacks.length > 0) {

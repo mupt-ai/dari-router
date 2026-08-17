@@ -64,7 +64,30 @@ const router = createRouter({
 });
 ```
 
-Credentials are supplied by your application. The runtime does not read environment variables itself. See the [framework documentation](https://docs.dari.dev/framework/overview). Managed-router YAML manifests for use with the Dari CLI are in [`examples/managed/`](examples/managed/).
+Credentials are supplied by your application; the runtime does not read environment variables itself. A canonical model ID identifies the model independently of where it runs. If that ID names the model owner rather than the execution provider, set `provider` to the service that will execute it and `providerModelId` to that service's Pi catalog ID:
+
+```ts
+const fireworksModel = pi.model("deepseek-ai/DeepSeek-V4-Pro-0813", {
+  provider: "fireworks",
+  providerModelId: "accounts/fireworks/models/deepseek-v4-pro-0813",
+});
+```
+
+For multiple providers, supply a credential callback. It receives the selected provider, model, API, and whether the call is for execution or selection:
+
+```ts
+const pi = await createPiRuntime({
+  apiKey: ({ provider }) => {
+    const key = provider === "fireworks"
+      ? process.env.FIREWORKS_API_KEY
+      : process.env.OPENAI_API_KEY;
+    if (!key) throw new Error(`Missing API key for ${provider}`);
+    return key;
+  },
+});
+```
+
+Explicit provider metadata always wins; provider-prefixed IDs keep legacy prefix inference. See the [framework documentation](https://docs.dari.dev/framework/overview). Managed-router YAML manifests for use with the Dari CLI are in [`examples/managed/`](examples/managed/).
 
 ## Explicit advanced boundaries
 

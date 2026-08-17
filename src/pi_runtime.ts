@@ -53,8 +53,9 @@ export async function createPiRuntime(
     id: string,
     overrides: Partial<PiRouterModelOptions<Metadata>> = {},
   ): RouterModel<Metadata> => {
-    const provider = modelProvider(id);
-    const registered = registeredModel(dependencies.registry, provider, id);
+    const provider = overrides.provider ?? modelProvider(id);
+    const providerModelId = overrides.providerModelId ?? legacyNativeModelId(id, provider);
+    const registered = registeredModel(dependencies.registry, provider, providerModelId, id);
     const reasoningEfforts = overrides.reasoningEfforts === undefined
       ? dependencies.supportedThinkingLevels(registered)
       : [...overrides.reasoningEfforts];
@@ -63,6 +64,7 @@ export async function createPiRuntime(
     return {
       id,
       provider,
+      providerModelId,
       api: registered.api,
       reasoningEfforts,
       ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
@@ -81,6 +83,7 @@ export async function createPiRuntime(
     const registered = registeredModel(
       dependencies.registry,
       execution.candidate.provider,
+      execution.candidate.providerModelId,
       execution.candidate.id,
     );
     if (registered.api !== execution.candidate.api) {
@@ -134,6 +137,7 @@ export async function createPiRuntime(
         candidate: {
           id: candidate.id,
           provider: candidate.provider!,
+          providerModelId: candidate.providerModelId,
           api: candidate.api!,
         },
         reasoningEffort: normalized.reasoning?.effort ?? candidate.defaultReasoningEffort ?? "off",
@@ -207,12 +211,24 @@ function modelProvider(id: string): string {
   }
 }
 
-function registeredModel(registry: PiModelRegistry, provider: string, id: string): PiModel {
-  let nativeId: string;
-  try {
-    nativeId = nativeModelId(id);
-  } catch {
-    nativeId = id;
+function legacyNativeModelId(id: string, provider: string): string {
+  const prefix = `${provider.toLowerCase()}/`;
+  return id.toLowerCase().startsWith(prefix) ? id.slice(prefix.length) : id;
+}
+
+function registeredModel(
+  registry: PiModelRegistry,
+  provider: string,
+  providerModelId: string | undefined,
+  id: string,
+): PiModel {
+  let nativeId = providerModelId;
+  if (nativeId === undefined) {
+    try {
+      nativeId = nativeModelId(id);
+    } catch {
+      nativeId = id;
+    }
   }
   const registered = registry.getModel(provider, nativeId) ?? registry.getModel(provider, id);
   if (registered === undefined) {

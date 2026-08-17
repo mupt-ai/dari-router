@@ -14,7 +14,7 @@ import {
 
 const FABLE = "anthropic/claude-fable-5";
 const SOL = "openai/gpt-5.6-sol";
-const GLM = "fireworks/zai-org/GLM-5.2";
+const GLM = "zai-org/GLM-5.2";
 
 const metadata: Record<string, CandidateModelMetadata> = {
   [FABLE]: {

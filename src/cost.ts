@@ -5,10 +5,12 @@ import {
   isAnthropicFamily,
   isOpenAiFamily,
   openAiCachedPrefixTokens,
+  prefixHitMatchesProvider,
   promptCacheProviderForModel,
   providerCacheableTokens,
   providerMinCacheTokens,
   tokenizerFamily,
+  type ModelProviderLookup,
   type PromptCacheProvider,
 } from "./cache_behavior.js";
 import { reasoningCacheScope, type ReasoningCacheScopeLookup } from "./cache_scope.js";
@@ -195,13 +197,16 @@ export function estimateCandidateCosts(args: {
     Record<string, Partial<Record<ReasoningEffort, number>> | null>
   >;
   cacheScope?: ReasoningCacheScopeLookup;
+  modelProvider?: ModelProviderLookup;
 }): CandidateCostEstimate[] {
-  const cacheScope = args.cacheScope ?? reasoningCacheScope;
+  const cacheScope = args.cacheScope ?? ((model) =>
+    reasoningCacheScope(model, args.modelProvider?.(model)));
   return args.candidates.map((candidate) => {
     const { model, reasoningEffort } = candidate;
     const price = args.pricing(model);
-    const anthropicStyle = isAnthropicFamily(model);
-    const openAiStyle = isOpenAiFamily(model);
+    const provider = args.modelProvider?.(model);
+    const anthropicStyle = isAnthropicFamily(model, provider);
+    const openAiStyle = isOpenAiFamily(model, provider);
     const promptEstimate = args.promptEstimatesByCandidate.get(
       routingCandidateKey(candidate),
     );
@@ -210,7 +215,10 @@ export function estimateCandidateCosts(args: {
         `missing prompt estimate for ${model}/${reasoningEffort}`,
       );
     }
-    const anchor = selectPromptAnchor(args.hits, model, reasoningEffort, cacheScope);
+    const selectedAnchor = selectPromptAnchor(args.hits, model, reasoningEffort, cacheScope);
+    const anchor = selectedAnchor && prefixHitMatchesProvider(selectedAnchor.entry, provider)
+      ? selectedAnchor
+      : undefined;
     const reusesStoredPromptTokens = promptEstimate.reusesStoredPromptTokens;
     const serializedTokens = Math.ceil(
       promptEstimate.chars / CHARS_PER_TOKEN,
@@ -218,8 +226,11 @@ export function estimateCandidateCosts(args: {
     const tokenizerReference = anchor ?? args.hits.deepest;
     const crossesTokenizerFamilies =
       tokenizerReference !== undefined
-      && tokenizerFamily(model)
-        !== tokenizerFamily(tokenizerReference.entry.model);
+      && tokenizerFamily(model, provider)
+        !== tokenizerFamily(
+          tokenizerReference.entry.model,
+          args.modelProvider?.(tokenizerReference.entry.model),
+        );
     // Candidate-specific serialization captures provider wire-shape
     // differences. Preserve the separate pessimistic margin for tokenizer
     // differences without borrowing the foreign model's measured token count.
@@ -233,7 +244,13 @@ export function estimateCandidateCosts(args: {
       estPrompt = knownTokens + newTokens;
     }
 
-    const hit = selectPrefixHit(args.hits, model, reasoningEffort, cacheScope);
+    const selectedHit = selectPrefixHit(args.hits, model, reasoningEffort, cacheScope);
+    const knownCacheProvider = promptCacheProviderForModel(model, provider) !== null;
+    const hit = selectedHit
+      && (provider === undefined || knownCacheProvider)
+      && prefixHitMatchesProvider(selectedHit.entry, provider)
+      ? selectedHit
+      : undefined;
     let warmTokens = 0;
     if (hit) {
       // tool_choice flips bust Anthropic's message cache but not automatic
@@ -252,7 +269,7 @@ export function estimateCandidateCosts(args: {
       // candidate's own hit, counted by its own provider — not to the global
       // prompt estimate (which may anchor on another provider's deeper entry).
       const meetsMinimum =
-        hit.entry.prompt_tokens >= providerMinCacheTokens(model);
+        hit.entry.prompt_tokens >= providerMinCacheTokens(model, provider);
       if (fingerprintsMatch && withinLookback && meetsMinimum) {
         warmTokens = openAiStyle
           ? openAiCachedPrefixTokens(hit.entry.prompt_tokens)
@@ -282,7 +299,7 @@ export function estimateCandidateCosts(args: {
     if (price) {
       const remainder = Math.max(0, estPrompt - warmTokens);
       estCost =
-        (warmTokens * price.cacheRead + remainder * freshInputRate(model, price, estPrompt)) /
+        (warmTokens * price.cacheRead + remainder * freshInputRate(model, price, estPrompt, provider)) /
         1_000_000;
     }
 
@@ -301,6 +318,7 @@ export function estimateCandidateCosts(args: {
             estPromptTokens: estPrompt,
             warmTokens,
             reasoningEffort,
+            provider,
             outputTokens: args.averageOutputTokensByModel?.[model]?.[reasoningEffort],
           })
         : null,
@@ -326,9 +344,10 @@ function fixedTurnCostEstimate(args: {
   estPromptTokens: number;
   warmTokens: number;
   reasoningEffort: ReasoningEffort;
+  provider?: string;
   outputTokens?: number;
 }): FixedTurnCostEstimate | null {
-  const provider = promptCacheProviderForModel(args.model);
+  const provider = promptCacheProviderForModel(args.model, args.provider);
   if (!provider || args.outputTokens === undefined) return null;
 
   // One pass to the longest horizon, snapshotting the running total at each
@@ -352,6 +371,7 @@ function fixedTurnCostEstimate(args: {
             inputTokens,
             cachedTokens: args.warmTokens,
             outputTokens,
+            provider,
           })
         : laterTurnCost({
             model: args.model,
@@ -395,6 +415,7 @@ function laterTurnCost(args: {
     inputTokens: args.inputTokens,
     cachedTokens: 0,
     outputTokens: args.outputTokens,
+    provider: args.provider,
   });
   if (cacheableTokens <= 0) return missCost;
 
@@ -404,6 +425,7 @@ function laterTurnCost(args: {
     inputTokens: args.inputTokens,
     cachedTokens: cacheableTokens,
     outputTokens: args.outputTokens,
+    provider: args.provider,
   });
   const hitProbability = FIXED_TURN_CACHE_HIT_PROBABILITY[args.provider];
   return hitCost * hitProbability + missCost * (1 - hitProbability);
@@ -424,8 +446,13 @@ export function turnCostUsdAt(
 // A caching provider writes whatever the prompt did not read, and several bill
 // that write above their input rate. An effort-keyed cache partitions on effort,
 // so a switch of either model or effort leaves nothing warm and writes it all.
-function freshInputRate(model: string, price: ModelPricing, promptTokens: number): number {
-  return price.cacheWrite > 0 && promptTokens >= providerMinCacheTokens(model)
+function freshInputRate(
+  model: string,
+  price: ModelPricing,
+  promptTokens: number,
+  provider?: string,
+): number {
+  return price.cacheWrite > 0 && promptTokens >= providerMinCacheTokens(model, provider)
     ? price.cacheWrite
     : price.input;
 }
@@ -436,11 +463,12 @@ function deterministicTurnCost(args: {
   inputTokens: number;
   cachedTokens: number;
   outputTokens: number;
+  provider?: string;
 }): number {
   const freshTokens = args.inputTokens - args.cachedTokens;
   return (
     (args.cachedTokens * args.price.cacheRead) / MTOK +
-    (freshTokens * freshInputRate(args.model, args.price, args.inputTokens)) / MTOK +
+    (freshTokens * freshInputRate(args.model, args.price, args.inputTokens, args.provider)) / MTOK +
     (args.outputTokens * args.price.output) / MTOK
   );
 }

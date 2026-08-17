@@ -113,6 +113,9 @@ export type RouterPrefixHit = {
   loose_hash?: string | null;
   conversation_id: string;
   model: string;
+  // Execution provider that wrote this cache entry. Providerless legacy rows
+  // are warm only when their model id itself carries the same provider prefix.
+  provider?: string | null;
   // Selector recommendation to use for the next turn. The serving model
   // remains separate because it owns this prefix's provider-cache metadata.
   next_model?: string | null;

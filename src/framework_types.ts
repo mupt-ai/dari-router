@@ -148,6 +148,7 @@ export type RouterModel<Metadata = unknown> = {
   id: string;
   executor?: string;
   provider?: string;
+  providerModelId?: string;
   api?: string;
   reasoningEfforts?: readonly ReasoningEffort[];
   defaultReasoningEffort?: ReasoningEffort;
@@ -159,6 +160,7 @@ export type RouterCandidate<Metadata = unknown> = {
   id: string;
   executor: string;
   provider: string;
+  providerModelId?: string;
   api: string;
   reasoningEfforts: readonly ReasoningEffort[];
   defaultReasoningEffort: ReasoningEffort;

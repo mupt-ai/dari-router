@@ -1,4 +1,4 @@
-import { nativeModelId, providerForModel } from "./model_ids.js";
+import { canonicalModelId, nativeModelId, providerForModel } from "./model_ids.js";
 import type { RouterPrefixHit } from "./types.js";
 
 // Provider prompt caches stop serving a prefix roughly five minutes after it
@@ -17,36 +17,39 @@ const OPENAI_MIN_CACHE_TOKENS = 1024;
 const OPENAI_CACHE_INCREMENT_TOKENS = 128;
 
 export type PromptCacheProvider = "openai" | "anthropic" | "fireworks" | "meta";
+export type ModelProviderLookup = (model: string) => string;
 
-// providerForModel() lowercases the provider prefix, so family checks must
-// compare case-insensitively too. Unlike providerForModel this never throws;
-// malformed ids classify as no family.
-function providerPrefix(model: string): string {
-  const slash = model.indexOf("/");
-  return slash <= 0 ? "" : model.slice(0, slash).toLowerCase();
+// Callers that know the serving provider pass it; otherwise the model id's
+// prefix decides, and an id with no parseable prefix is an error, not a
+// silently generic model.
+function modelProvider(model: string, provider?: string): string {
+  return (provider ?? providerForModel(model)).toLowerCase();
 }
 
-export function isAnthropicFamily(model: string): boolean {
-  return providerPrefix(model) === "anthropic";
+export function isAnthropicFamily(model: string, provider?: string): boolean {
+  return modelProvider(model, provider) === "anthropic";
 }
 
-export function isOpenAiFamily(model: string): boolean {
-  return providerPrefix(model) === "openai";
+export function isOpenAiFamily(model: string, provider?: string): boolean {
+  return modelProvider(model, provider) === "openai";
 }
 
-function isFireworksFamily(model: string): boolean {
-  return providerPrefix(model) === "fireworks";
+function isFireworksFamily(model: string, provider?: string): boolean {
+  return modelProvider(model, provider) === "fireworks";
 }
 
-function isMetaFamily(model: string): boolean {
-  return providerPrefix(model) === "meta";
+function isMetaFamily(model: string, provider?: string): boolean {
+  return modelProvider(model, provider) === "meta";
 }
 
-export function promptCacheProviderForModel(model: string): PromptCacheProvider | null {
-  if (isOpenAiFamily(model)) return "openai";
-  if (isAnthropicFamily(model)) return "anthropic";
-  if (isFireworksFamily(model)) return "fireworks";
-  if (isMetaFamily(model)) return "meta";
+export function promptCacheProviderForModel(
+  model: string,
+  provider?: string,
+): PromptCacheProvider | null {
+  if (isOpenAiFamily(model, provider)) return "openai";
+  if (isAnthropicFamily(model, provider)) return "anthropic";
+  if (isFireworksFamily(model, provider)) return "fireworks";
+  if (isMetaFamily(model, provider)) return "meta";
   return null;
 }
 
@@ -62,8 +65,8 @@ export function openAiCachedPrefixTokens(promptTokens: number): number {
 // Anthropic cache minimums vary by model family. Keep this routing-side
 // estimate conservative for known higher-minimum models; unknown future
 // direct Anthropic models fall back to the common 1024-token threshold.
-export function anthropicMinCacheTokens(model: string): number {
-  if (!isAnthropicFamily(model)) return OPENAI_MIN_CACHE_TOKENS;
+export function anthropicMinCacheTokens(model: string, provider?: string): number {
+  if (!isAnthropicFamily(model, provider)) return OPENAI_MIN_CACHE_TOKENS;
   const native = nativeModelId(model)
     .toLowerCase()
     .replace(/(?<=\d)\.(?=\d)/g, "-");
@@ -81,10 +84,12 @@ export function anthropicMinCacheTokens(model: string): number {
   return OPENAI_MIN_CACHE_TOKENS;
 }
 
-export function tokenizerFamily(model: string): string {
-  const provider = providerForModel(model);
+export function tokenizerFamily(model: string, providerOverride?: string): string {
+  const provider = modelProvider(model, providerOverride);
   if (provider === "fireworks") {
-    const native = nativeModelId(model).toLowerCase();
+    const canonical = canonicalModelId(model).toLowerCase();
+    const providerPrefixed = canonical.startsWith(`${provider}/`);
+    const native = providerPrefixed ? nativeModelId(canonical) : canonical;
     const accountPrefix = "accounts/fireworks/models/";
     const modelFamily = native.startsWith(accountPrefix)
       ? native.slice(accountPrefix.length)
@@ -95,9 +100,36 @@ export function tokenizerFamily(model: string): string {
   return provider;
 }
 
-export function providerMinCacheTokens(model: string): number {
-  if (isAnthropicFamily(model)) return anthropicMinCacheTokens(model);
-  if (isFireworksFamily(model) || isMetaFamily(model)) return 0;
+// A hit whose model id has no parseable prefix cannot prove provenance, so it
+// reads as cold rather than erroring the legacy path.
+function prefixProviderMatches(model: string, expected: string): boolean {
+  try {
+    return providerForModel(model) === expected;
+  } catch {
+    return false;
+  }
+}
+
+export function prefixHitMatchesProvider(
+  hit: RouterPrefixHit,
+  currentProvider: string | undefined,
+): boolean {
+  const storedProvider = hit.provider?.trim().toLowerCase();
+  if (!currentProvider) {
+    // Legacy callers that do not declare an execution provider keep the old
+    // prefix-inferred behavior. A stored provider proves provenance only when
+    // it agrees with the model id's prefix; otherwise treat the hit as cold.
+    if (!storedProvider) return true;
+    return prefixProviderMatches(hit.model, storedProvider);
+  }
+  const current = currentProvider.toLowerCase();
+  if (storedProvider) return storedProvider === current;
+  return prefixProviderMatches(hit.model, current);
+}
+
+export function providerMinCacheTokens(model: string, provider?: string): number {
+  if (isAnthropicFamily(model, provider)) return anthropicMinCacheTokens(model, provider);
+  if (isFireworksFamily(model, provider) || isMetaFamily(model, provider)) return 0;
   return OPENAI_MIN_CACHE_TOKENS;
 }
 
@@ -124,7 +156,7 @@ export function providerCacheableTokens(
   if (prefixTokens <= 0) return 0;
   if (provider === "openai") return openAiCachedPrefixTokens(prefixTokens);
   if (provider === "anthropic") {
-    return prefixTokens >= anthropicMinCacheTokens(model) ? Math.floor(prefixTokens) : 0;
+    return prefixTokens >= anthropicMinCacheTokens(model, provider) ? Math.floor(prefixTokens) : 0;
   }
   return Math.floor(prefixTokens);
 }

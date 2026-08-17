@@ -183,6 +183,27 @@ test("Pi runtime executes a declared model end to end without a custom executor"
   }]);
 });
 
+test("Pi runtime resolves provider-neutral ids through explicit execution identity", async () => {
+  const canonicalId = "deepseek-ai/DeepSeek-V4-Pro-0813";
+  const providerModelId = "accounts/fireworks/models/deepseek-v4-pro";
+  const registered = piModel({
+    id: providerModelId,
+    provider: "fireworks",
+    api: "openai-completions",
+  });
+  const runtime = await createPiRuntime({
+    registry: fakeRegistry([registered], {}),
+    apiKey: "test-key",
+  });
+
+  expect(runtime.model(canonicalId, { provider: "fireworks", providerModelId })).toMatchObject({
+    id: canonicalId,
+    provider: "fireworks",
+    providerModelId,
+    api: "openai-completions",
+  });
+});
+
 test("Pi runtime translates provider streams into Anthropic SSE", async () => {
   let streamOptions: SimpleStreamOptions | undefined;
   const registry = fakeRegistry([ANTHROPIC_MODEL], {

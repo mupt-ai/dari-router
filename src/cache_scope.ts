@@ -18,24 +18,30 @@ export type ReasoningCacheScope = "effort_keyed" | "shared";
 // Unlisted models default to effort_keyed: the safe direction is to
 // under-claim warmth, never to price a cold prefix as a cache read.
 export const DEFAULT_REASONING_CACHE_SCOPES: Readonly<Record<string, ReasoningCacheScope>> = {
-  "openai/gpt-5.6-sol": "effort_keyed",
-  "openai/gpt-5.6-terra": "effort_keyed",
-  "openai/gpt-5.6-luna": "effort_keyed",
-  "openai/gpt-5.5": "effort_keyed",
-  "openai/gpt-4.1-mini": "shared", // single reasoning mode; nothing to key on
-  "anthropic/claude-opus-4-8": "effort_keyed",
-  "anthropic/claude-sonnet-4-6": "effort_keyed",
-  "anthropic/claude-haiku-4-5": "effort_keyed", // via pi-ai message-block cache_control; see note above
-  "fireworks/deepseek-ai/DeepSeek-V4-Pro": "shared",
-  "fireworks/deepseek-ai/DeepSeek-V4-Flash": "shared",
-  "fireworks/deepseek-ai/DeepSeek-V4-Flash-0731": "shared",
-  "fireworks/zai-org/GLM-5.2": "shared",
+  "openai:openai/gpt-5.6-sol": "effort_keyed",
+  "openai:openai/gpt-5.6-terra": "effort_keyed",
+  "openai:openai/gpt-5.6-luna": "effort_keyed",
+  "anthropic:anthropic/claude-opus-4-8": "effort_keyed",
+  "anthropic:anthropic/claude-haiku-4-5": "effort_keyed", // via pi-ai message-block cache_control; see note above
+  "fireworks:deepseek-ai/DeepSeek-V4-Pro-0813": "shared",
+  "fireworks:deepseek-ai/DeepSeek-V4-Flash-0731": "shared",
+  "fireworks:zai-org/GLM-5.2": "shared",
 };
 
 export type ReasoningCacheScopeLookup = (modelId: string) => ReasoningCacheScope;
 
-export function reasoningCacheScope(modelId: string): ReasoningCacheScope {
-  return DEFAULT_REASONING_CACHE_SCOPES[canonicalModelId(modelId)] ?? "effort_keyed";
+export function reasoningCacheScope(
+  modelId: string,
+  provider?: string,
+): ReasoningCacheScope {
+  const canonical = canonicalModelId(modelId);
+  const normalizedProvider = (provider ?? canonical.split("/", 1)[0]).toLowerCase();
+  const legacyPrefix = `${normalizedProvider}/`;
+  const providerNeutral = normalizedProvider === "fireworks" && canonical.startsWith(legacyPrefix)
+    ? canonical.slice(legacyPrefix.length)
+    : canonical;
+  return DEFAULT_REASONING_CACHE_SCOPES[`${normalizedProvider}:${providerNeutral}`]
+    ?? "effort_keyed";
 }
 
 // The provider cache partition a prefix entry belongs to. An effort-keyed
@@ -51,8 +57,11 @@ export function reasoningCacheScope(modelId: string): ReasoningCacheScope {
 export function cachePartitionKey(
   modelId: string,
   reasoningBucket: string | null | undefined,
-  cacheScope: ReasoningCacheScopeLookup = reasoningCacheScope
+  cacheScope?: ReasoningCacheScopeLookup,
+  provider?: string,
 ): string {
-  if (cacheScope(modelId) === "shared") return modelId;
-  return `${modelId}\u0000${reasoningBucket ?? ""}`;
+  const scope = cacheScope ?? ((model: string) => reasoningCacheScope(model, provider));
+  const executionIdentity = provider ? `${provider.toLowerCase()}\u0000${modelId}` : modelId;
+  if (scope(modelId) === "shared") return executionIdentity;
+  return `${executionIdentity}\u0000${reasoningBucket ?? ""}`;
 }

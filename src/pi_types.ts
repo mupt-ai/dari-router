@@ -50,7 +50,7 @@ export type CreatePiRuntimeOptions = {
 
 export type PiRouterModelOptions<Metadata = unknown> = Omit<
   RouterModel<Metadata>,
-  "id" | "executor" | "provider" | "api"
+  "id" | "executor" | "api"
 >;
 
 export type PiRuntime = {
@@ -64,7 +64,7 @@ export type PiRuntime = {
 
 export type PiExecution = {
   request: RouterRequest;
-  candidate: Pick<RouterCandidate, "id" | "provider" | "api">;
+  candidate: Pick<RouterCandidate, "id" | "provider" | "providerModelId" | "api">;
   reasoningEffort: ReasoningEffort;
   signal: AbortSignal;
   purpose: PiCredentialInput["purpose"];

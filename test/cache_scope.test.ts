@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 
-import { cachePartitionKey, type ReasoningCacheScopeLookup } from "../src/cache_scope.js";
+import {
+  cachePartitionKey,
+  reasoningCacheScope,
+  type ReasoningCacheScopeLookup,
+} from "../src/cache_scope.js";
 
 const SOL = "openai/gpt-5.6-sol";
-const GLM = "fireworks/zai-org/GLM-5.2";
+const GLM = "zai-org/GLM-5.2";
 
 test("partition keys follow the provider's reasoning cache scope", () => {
   // Effort-keyed: each effective effort warms its own partition, and an entry
@@ -13,8 +17,12 @@ test("partition keys follow the provider's reasoning cache scope", () => {
   expect(cachePartitionKey(SOL, "low")).toBe(cachePartitionKey(SOL, "low"));
 
   // Shared: one partition per model, so effort cannot split it.
-  expect(cachePartitionKey(GLM, "off")).toBe(cachePartitionKey(GLM, "medium"));
-  expect(cachePartitionKey(GLM, "off")).not.toBe(cachePartitionKey(SOL, "off"));
+  const fireworksScope = (model: string) => reasoningCacheScope(model, "fireworks");
+  expect(cachePartitionKey(GLM, "off", fireworksScope)).toBe(cachePartitionKey(GLM, "medium", fireworksScope));
+  expect(cachePartitionKey(GLM, "off", fireworksScope)).not.toBe(cachePartitionKey(SOL, "off"));
+  expect(cachePartitionKey(GLM, "off", fireworksScope, "fireworks")).not.toBe(
+    cachePartitionKey(GLM, "off", () => "effort_keyed", "openrouter"),
+  );
 
   // A host that reclassifies a provider moves its storage with the estimator.
   const shared: ReasoningCacheScopeLookup = () => "shared";

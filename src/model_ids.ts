@@ -3,6 +3,8 @@ import type { Provider } from "./types.js";
 
 const PROVIDER_PATTERN = /^[a-z][a-z0-9_.-]{0,119}$/;
 
+// Legacy inference for provider-prefixed model ids. Canonical model ids may
+// instead name their owner; explicit provider metadata must win when present.
 export function providerForModel(model: string): Provider {
   const slash = model.indexOf("/");
   if (slash <= 0) {
@@ -15,6 +17,8 @@ export function providerForModel(model: string): Provider {
   return provider;
 }
 
+// Legacy companion to providerForModel for ids whose first segment is the
+// execution provider. Provider-neutral declarations use providerModelId.
 export function nativeModelId(model: string): string {
   return model.slice(`${providerForModel(model)}/`.length);
 }

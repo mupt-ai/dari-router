@@ -12,12 +12,17 @@ test("classifies anthropic family for direct Anthropic only", () => {
   expect(isAnthropicFamily("anthropic/claude-sonnet-4-6")).toBe(true);
   expect(isAnthropicFamily("fireworks/deepseek-ai/DeepSeek-V4-Pro")).toBe(false);
   expect(isAnthropicFamily("openai/gpt-5.2")).toBe(false);
-  expect(isAnthropicFamily("fireworks/zai-org/GLM-5.2")).toBe(false);
+  expect(isAnthropicFamily("zai-org/GLM-5.2")).toBe(false);
 
   expect(isAnthropicFamily("Anthropic/claude-sonnet-4-6")).toBe(true);
   expect(isAnthropicFamily("ANTHROPIC/claude-sonnet-4-6")).toBe(true);
   expect(isAnthropicFamily("anthropic-proxy/claude")).toBe(false);
-  expect(isAnthropicFamily("claude-sonnet-4-6")).toBe(false);
+  // A bare native id carries no provider prefix: classification needs the
+  // caller's provider, and guessing is an error rather than "no family".
+  expect(isAnthropicFamily("claude-sonnet-4-6", "anthropic")).toBe(true);
+  expect(() => isAnthropicFamily("claude-sonnet-4-6")).toThrow(
+    "Unsupported model provider",
+  );
 });
 
 test("tracks provider-specific cache token minimums", () => {

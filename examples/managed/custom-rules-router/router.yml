@@ -1,10 +1,13 @@
 name: Example Custom Rules Router
 enabled_models:
   - openai/gpt-5.6-sol
-  - fireworks/deepseek-ai/DeepSeek-V4-Flash-0731
+  - deepseek-ai/DeepSeek-V4-Flash-0731
+model_providers:
+  openai/gpt-5.6-sol: openai
+  deepseek-ai/DeepSeek-V4-Flash-0731: fireworks
 model_thinking_levels:
   openai/gpt-5.6-sol: [low, medium, high]
-  fireworks/deepseek-ai/DeepSeek-V4-Flash-0731: [off]
+  deepseek-ai/DeepSeek-V4-Flash-0731: [off]
 provider_key_sources:
   openai: managed
   fireworks: managed
@@ -15,7 +18,7 @@ custom_config:
       use: openai/gpt-5.6-sol
       thinking_level: high
     - when: short questions and straightforward implementation
-      use: fireworks/deepseek-ai/DeepSeek-V4-Flash-0731
+      use: deepseek-ai/DeepSeek-V4-Flash-0731
       thinking_level: off
-  default: fireworks/deepseek-ai/DeepSeek-V4-Flash-0731
+  default: deepseek-ai/DeepSeek-V4-Flash-0731
   default_thinking_level: off
