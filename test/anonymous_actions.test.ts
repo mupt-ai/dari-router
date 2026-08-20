@@ -49,9 +49,9 @@ function selectorInput(): JsonObject {
             model_id: CHEAP,
             thinking_level: "low",
             score: 40,
-            rank: 22,
-            rank_total: 28,
-            z_score: -0.94,
+            rank: 3,
+            rank_total: 3,
+            z_score: -1.3,
             notes: "cheap model",
           },
           {
@@ -59,17 +59,17 @@ function selectorInput(): JsonObject {
             thinking_level: "high",
             score: 90,
             rank: 1,
-            rank_total: 28,
-            z_score: 1.6,
+            rank_total: 3,
+            z_score: 1.14,
             notes: "strong model",
           },
           {
             model_id: MEDIUM,
             thinking_level: "medium",
             score: 70,
-            rank: 5,
-            rank_total: 28,
-            z_score: 1.13,
+            rank: 2,
+            rank_total: 3,
+            z_score: 0.16,
             notes: "medium model",
           },
         ],
@@ -158,16 +158,16 @@ test("renders each action as a block of benchmark standing and one projected cos
   expect(serialized).toContain("<benchmarks>\n- SWE-bench: Coding reliability\n</benchmarks>");
   expect(block(serialized, actionFor(slots, CHEAP))).toEqual([
     "- Cost: 1 turn $0.006, 10 turns $0.0432, 100 turns $0.55",
-    "- SWE-bench: Rank 22/28, Z -0.94",
+    "- SWE-bench: Rank 3/3, Z -1.30",
   ]);
   expect(block(serialized, actionFor(slots, STRONG))).toEqual([
     "- Cost: 1 turn $0.02, 10 turns $0.191, 100 turns $2.40",
-    "- SWE-bench: Rank 1/28, Z +1.60",
+    "- SWE-bench: Rank 1/3, Z +1.14",
   ]);
   // An action with no loop projection simply has no cost line; per-request
   // rates would be a different unit from every other block.
   expect(block(serialized, actionFor(slots, MEDIUM))).toEqual([
-    "- SWE-bench: Rank 5/28, Z +1.13",
+    "- SWE-bench: Rank 2/3, Z +0.16",
   ]);
   expect(serialized).toContain(`<previous_action>\n${actionFor(slots, MEDIUM)}\n</previous_action>`);
 });
@@ -313,10 +313,44 @@ test("rejects malformed or identity-leaking selector shapes", () => {
 
   const staleEval = selectorInput();
   (staleEval["imported_evals"] as JsonObject[])[0]!["scores"] = [
-    { model_id: "openai/not-a-candidate", thinking_level: "low", score: 1 },
+    {
+      model_id: "openai/not-a-candidate",
+      thinking_level: "low",
+      score: 1,
+      rank: 1,
+      rank_total: 1,
+      z_score: 0,
+    },
   ];
   expect(() => anonymizeSelectorInput(staleEval, slots)).toThrow(
     "references unavailable candidate openai/not-a-candidate/low",
+  );
+});
+
+test("rejects impossible ranks and inconsistent resolved-candidate denominators", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const impossibleRank = selectorInput();
+  const impossibleScores = (impossibleRank["imported_evals"] as JsonObject[])[0]![
+    "scores"
+  ] as JsonObject[];
+  impossibleScores[0]!["rank"] = 4;
+  expect(() => anonymizeSelectorInput(impossibleRank, slots)).toThrow(
+    "rank must be an integer between 1 and rank_total",
+  );
+
+  const inconsistentTotal = selectorInput();
+  const inconsistentScores = (inconsistentTotal["imported_evals"] as JsonObject[])[0]![
+    "scores"
+  ] as JsonObject[];
+  inconsistentScores[0]!["rank_total"] = 4;
+  expect(() => anonymizeSelectorInput(inconsistentTotal, slots)).toThrow(
+    "rank_total must equal the resolved score count 3",
+  );
+
+  const anonymous = anonymizeSelectorInput(selectorInput(), slots);
+  anonymous.imported_evals[0]!.scores[0]!.rank = 4;
+  expect(() => buildAnonymousPolicyPrompt(anonymous, slots)).toThrow(
+    "rank must be an integer between 1 and rank_total",
   );
 });
 

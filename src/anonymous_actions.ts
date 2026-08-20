@@ -153,6 +153,7 @@ export function buildAnonymousPolicyPrompt(
 // section that grows turn over turn, so keeping it at the end preserves the
 // shared prefix.
 export function formatAnonymousPolicyInput(input: AnonymousSelectorInput): string {
+  assertValidBenchmarkStandings(input.imported_evals);
   const sections = [
     ...(input.imported_evals.length > 0
       ? [section("benchmarks", input.imported_evals.map(glossaryLine).join("\n"))]
@@ -211,6 +212,36 @@ function usd(value: number): string {
 
 function glossaryLine(card: AnonymousEvalCard): string {
   return card.description === null ? `- ${card.name}` : `- ${card.name}: ${card.description}`;
+}
+
+function assertValidBenchmarkStandings(cards: readonly AnonymousEvalCard[]): void {
+  for (const [cardIndex, card] of cards.entries()) {
+    const resolvedCount = card.scores.length;
+    for (const [scoreIndex, score] of card.scores.entries()) {
+      assertValidBenchmarkStanding(
+        score.rank,
+        score.rank_total,
+        resolvedCount,
+        `anonymous eval[${cardIndex}].scores[${scoreIndex}]`,
+      );
+    }
+  }
+}
+
+function assertValidBenchmarkStanding(
+  rank: number,
+  rankTotal: number,
+  resolvedCount: number,
+  label: string,
+): void {
+  if (!Number.isInteger(rank) || rank < 1 || rank > rankTotal) {
+    throw new Error(`${label}.rank must be an integer between 1 and rank_total`);
+  }
+  if (!Number.isInteger(rankTotal) || rankTotal !== resolvedCount) {
+    throw new Error(
+      `${label}.rank_total must equal the resolved score count ${resolvedCount}`,
+    );
+  }
 }
 
 function previousAction(value: unknown): string | null {
@@ -321,24 +352,29 @@ function anonymizeEvals(
     if (!Array.isArray(scores)) {
       throw new Error(`selector eval[${evalIndex}].scores must be an array`);
     }
+    const resolvedCount = scores.length;
+    const anonymousScores = scores.map((entryScore, scoreIndex) => {
+      const label = `selector eval[${evalIndex}].scores[${scoreIndex}]`;
+      const score = jsonRecord(entryScore, label);
+      const rank = requiredNumber(score["rank"], `${label}.rank`);
+      const rankTotal = requiredNumber(score["rank_total"], `${label}.rank_total`);
+      assertValidBenchmarkStanding(rank, rankTotal, resolvedCount, label);
+      return {
+        action: actionForCandidate(
+          byCandidate,
+          requiredString(score["model_id"], `${label}.model_id`),
+          requiredString(score["thinking_level"], `${label}.thinking_level`),
+        ),
+        rank,
+        rank_total: rankTotal,
+        z_score: requiredNumber(score["z_score"], `${label}.z_score`),
+      };
+    });
     return {
       name: requiredString(card["name"], `selector eval[${evalIndex}].name`),
       description: typeof card["description"] === "string" ? card["description"] : null,
       // Explicit allowlist: notes and any future field can name the model.
-      scores: scores.map((entryScore, scoreIndex) => {
-        const label = `selector eval[${evalIndex}].scores[${scoreIndex}]`;
-        const score = jsonRecord(entryScore, label);
-        return {
-          action: actionForCandidate(
-            byCandidate,
-            requiredString(score["model_id"], `${label}.model_id`),
-            requiredString(score["thinking_level"], `${label}.thinking_level`),
-          ),
-          rank: requiredNumber(score["rank"], `${label}.rank`),
-          rank_total: requiredNumber(score["rank_total"], `${label}.rank_total`),
-          z_score: requiredNumber(score["z_score"], `${label}.z_score`),
-        };
-      }),
+      scores: anonymousScores,
     };
   });
 }

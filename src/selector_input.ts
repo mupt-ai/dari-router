@@ -25,6 +25,14 @@ type SelectorCandidate = {
 
 type SelectorPreviousDecision = SelectorCandidate & { reason: string };
 
+type ResolvedEvalScore = {
+  model_id: string;
+  thinking_level: ReasoningEffort;
+  score: number;
+  notes: string | null;
+  imputed?: true;
+};
+
 export type SelectorInput = {
   candidate_pairs: SelectorCandidate[];
   imported_evals: Array<Record<string, unknown>>;
@@ -171,46 +179,43 @@ function matchingEvalScores(
   const uniqueCandidates = new Map(
     candidates.map((candidate) => [routingCandidateKey(candidate), candidate]),
   );
-  return [...uniqueCandidates.values()].flatMap((candidate) => {
-    const modelScores = scores.filter(
-      (score) => score.model_id === candidate.model,
-    );
-    const exact = modelScores.find(
-      (score) => score.thinking_level === candidate.reasoningEffort,
-    );
-    const generic = modelScores.find((score) => score.thinking_level == null);
-    const match = exact ?? generic;
-    if (match) {
-      return [
-        {
+  const resolvedScores = [...uniqueCandidates.values()]
+    .map((candidate): ResolvedEvalScore | null => {
+      const modelScores = scores.filter(
+        (score) => score.model_id === candidate.model,
+      );
+      const exact = modelScores.find(
+        (score) => score.thinking_level === candidate.reasoningEffort,
+      );
+      const generic = modelScores.find((score) => score.thinking_level == null);
+      const match = exact ?? generic;
+      if (match) {
+        return {
           model_id: candidate.model,
           thinking_level: candidate.reasoningEffort,
           score: match.score,
-          ...normalizedScore(match.score, scores),
           notes: match.notes ?? null,
-        },
-      ];
-    }
-    if (!imputeEvalScores) return [];
-    const imputed = pairwiseRatioScore(
-      candidate,
-      modelScores,
-      minScore,
-      maxScore,
-      thinkingLevelRatios,
-    );
-    if (imputed === null) return [];
-    return [
-      {
+        };
+      }
+      if (!imputeEvalScores) return null;
+      const imputed = pairwiseRatioScore(
+        candidate,
+        modelScores,
+        minScore,
+        maxScore,
+        thinkingLevelRatios,
+      );
+      if (imputed === null) return null;
+      return {
         model_id: candidate.model,
         thinking_level: candidate.reasoningEffort,
         score: imputed,
-        ...normalizedScore(imputed, scores),
         notes: null,
         imputed: true,
-      },
-    ];
-  });
+      };
+    })
+    .filter((score): score is ResolvedEvalScore => score !== null);
+  return normalizeResolvedScores(resolvedScores);
 }
 
 // Learns every directed thinking-level ratio from all eval/model observations
@@ -299,26 +304,34 @@ function mean(values: number[]): number {
   return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
-// Positions a candidate's score against every model on the scorecard, not just
-// the candidates that survived pruning. Candidate-relative normalization would
-// move with the pruned set (with two candidates a z-score is always +/-1), so
-// the selector would read pure ordering as if it carried magnitude.
-function normalizedScore(
-  score: number,
-  population: RouterEvalScore[],
-): { rank: number; rank_total: number; z_score: number } {
-  const values = population.map((entry) => entry.score);
-  const mean = values.reduce((total, value) => total + value, 0) / values.length;
+// The selector compares current actions, so exact, generic, and imputed rows
+// share one candidate-only population. Unresolved actions never enter the
+// denominator or the distribution.
+function normalizeResolvedScores(
+  scores: ResolvedEvalScore[],
+): Array<Record<string, unknown>> {
+  if (scores.length === 0) return [];
+
+  const values = scores.map((entry) => entry.score);
+  const populationMean = mean(values);
   const variance =
-    values.reduce((total, value) => total + (value - mean) ** 2, 0) /
+    values.reduce((total, value) => total + (value - populationMean) ** 2, 0) /
     values.length;
   const stdDev = Math.sqrt(variance);
-  return {
-    // Competition ranking, best score first; tied scores share the low rank.
-    rank: 1 + values.filter((value) => value > score).length,
-    rank_total: values.length,
-    z_score: stdDev === 0 ? 0 : round2((score - mean) / stdDev),
-  };
+  const ranks = new Map<number, number>();
+  [...values]
+    .sort((left, right) => right - left)
+    .forEach((score, index) => {
+      // Competition ranking, best score first; tied scores share the low rank.
+      if (!ranks.has(score)) ranks.set(score, index + 1);
+    });
+
+  return scores.map((score) => ({
+    ...score,
+    rank: ranks.get(score.score)!,
+    rank_total: scores.length,
+    z_score: stdDev === 0 ? 0 : round2((score.score - populationMean) / stdDev),
+  }));
 }
 
 function round2(value: number): number {

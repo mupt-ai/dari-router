@@ -35,9 +35,9 @@ function selectorInput(card: RouterEval, candidates: RoutingCandidate[]): Select
   });
 }
 
-test("ranks and normalizes candidate scores against the whole scorecard", () => {
-  // Candidate-relative normalization would report +/-1 for these two whatever
-  // the gap; the other 8 scored models are what make the numbers mean anything.
+test("ranks and normalizes only the resolved candidate actions", () => {
+  // Public scorecard rows provide benchmark evidence, but they are not current
+  // routing actions and must not enter the selector's comparison population.
   const others = Array.from({ length: 8 }, (_, index) => ({
     model_id: `other/model-${index}`,
     score: 30 + index * 5,
@@ -56,9 +56,9 @@ test("ranks and normalizes candidate scores against the whole scorecard", () => 
       model_id: CHEAP.model,
       thinking_level: "low",
       score: 40,
-      rank: 7,
-      rank_total: 10,
-      z_score: -0.66,
+      rank: 2,
+      rank_total: 2,
+      z_score: -1,
       notes: null,
     },
     {
@@ -66,32 +66,36 @@ test("ranks and normalizes candidate scores against the whole scorecard", () => 
       thinking_level: "high",
       score: 90,
       rank: 1,
-      rank_total: 10,
-      z_score: 2.33,
+      rank_total: 2,
+      z_score: 1,
       notes: null,
     },
   ]);
 });
 
-test("gives tied scores the same rank and a flat scorecard a zero z-score", () => {
+test("gives tied candidate scores the same competition rank", () => {
+  const best = {
+    model: "fireworks/best",
+    reasoningEffort: "medium",
+  } satisfies RoutingCandidate;
   const input = selectorInput(
     evalCard([
       { model_id: "other/best", score: 70 },
       { model_id: CHEAP.model, thinking_level: "low", score: 50 },
       { model_id: STRONG.model, thinking_level: "high", score: 50 },
+      { model_id: best.model, thinking_level: "medium", score: 70 },
     ]),
-    [CHEAP, STRONG],
+    [CHEAP, STRONG, best],
   );
-  expect(scores(input).map((score) => score["rank"])).toEqual([2, 2]);
-
-  const flat = selectorInput(
-    evalCard([
-      { model_id: CHEAP.model, thinking_level: "low", score: 50 },
-      { model_id: STRONG.model, thinking_level: "high", score: 50 },
-    ]),
-    [CHEAP, STRONG],
-  );
-  expect(scores(flat).map((score) => score["z_score"])).toEqual([0, 0]);
+  expect(scores(input).map(({ rank, rank_total, z_score }) => ({
+    rank,
+    rank_total,
+    z_score,
+  }))).toEqual([
+    { rank: 2, rank_total: 3, z_score: -0.71 },
+    { rank: 2, rank_total: 3, z_score: -0.71 },
+    { rank: 1, rank_total: 3, z_score: 1.41 },
+  ]);
 });
 
 test("normalizes a thinking-level-agnostic score row against the same population", () => {
@@ -107,8 +111,8 @@ test("normalizes a thinking-level-agnostic score row against the same population
   expect(scores(input)[0]).toMatchObject({
     thinking_level: "low",
     score: 50,
-    rank: 2,
-    rank_total: 3,
+    rank: 1,
+    rank_total: 1,
     z_score: 0,
   });
 });
@@ -128,6 +132,60 @@ function imputedInput(
     imputeEvalScores: true,
   });
 }
+
+test("normalizes exact, generic, and imputed rows over one resolved candidate group", () => {
+  const missing = {
+    model: "fireworks/missing",
+    reasoningEffort: "max",
+  } satisfies RoutingCandidate;
+  const input = imputedInput(
+    evalCard([
+      { model_id: CHEAP.model, score: 40 },
+      { model_id: STRONG.model, thinking_level: "high", score: 80 },
+      { model_id: MID.model, thinking_level: "low", score: 30 },
+      { model_id: "other/ratio-source", thinking_level: "low", score: 20 },
+      { model_id: "other/ratio-source", thinking_level: "medium", score: 40 },
+    ]),
+    [CHEAP, STRONG, MID, missing],
+  );
+  const resolvedScores = scores(input);
+
+  expect(resolvedScores).toEqual([
+    {
+      model_id: CHEAP.model,
+      thinking_level: "low",
+      score: 40,
+      notes: null,
+      rank: 3,
+      rank_total: 3,
+      z_score: -1.22,
+    },
+    {
+      model_id: STRONG.model,
+      thinking_level: "high",
+      score: 80,
+      notes: null,
+      rank: 1,
+      rank_total: 3,
+      z_score: 1.22,
+    },
+    {
+      model_id: MID.model,
+      thinking_level: "medium",
+      score: 60,
+      notes: null,
+      imputed: true,
+      rank: 2,
+      rank_total: 3,
+      z_score: 0,
+    },
+  ]);
+  expect(resolvedScores.every((row) => {
+    const rank = row["rank"] as number;
+    const rankTotal = row["rank_total"] as number;
+    return rank >= 1 && rank <= rankTotal;
+  })).toBe(true);
+});
 
 test("leaves the scorecard empty when imputation is off and only other levels are scored", () => {
   const input = selectorInput(

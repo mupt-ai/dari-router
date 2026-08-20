@@ -13,7 +13,7 @@ export const SELECTOR_SYSTEM_PROMPT = `You are Dari's model router. Pick the bes
 # Selection procedure
 
 1. Capability first: make sure the selected pair can reasonably handle the task. Consider both model capability and how much thinking the task needs; capability is never traded away for cost.
-2. Use imported eval scorecards as benchmark evidence when relevant.
+2. Use imported eval scorecards as benchmark evidence when relevant. Rank is each candidate action's standing among the scored candidate actions on that benchmark, and z_score uses that same candidate group.
 3. A missing benchmark score means that candidate pair was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.
 4. When several pairs are viable on capability, use cost_estimates as the deciding factor between them.
 5. Prefer the previous_decision pair when the task hasn't changed.
@@ -37,7 +37,7 @@ custom_rules is ordered by model price, most expensive first; the order is prese
 When several rules match, pick the one whose when condition is most specific to the current request.
 When no rule matches, select default_target if it is set; its null thinking_level also means Auto. Otherwise prefer previous_decision when it is a candidate; otherwise pick the most capable candidate pair.
 Prefer previous_decision while the matched rule (or task phase) hasn't changed.
-Use imported eval scorecards as benchmark evidence when relevant. A missing benchmark score means that candidate pair was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.
+Use imported eval scorecards as benchmark evidence when relevant. Rank is each candidate action's standing among the scored candidate actions on that benchmark, and z_score uses that same candidate group. A missing benchmark score means that candidate pair was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.
 Use cost_estimates only to break ties between rule-matched candidates or to choose among an Auto target's viable thinking levels; a rule match is never traded away for cost.
 When using cost_estimates, fixed_turn_cost_estimate.projections is the primary cost metric whenever present because it includes current cache warmth and projected loop cost at ${PROJECTED_TURNS_PHRASE} turns. For candidates without fixed_turn_cost_estimate, use est_input_cost_usd and output_cost_per_mtok as fallback cost evidence. Do not rank by output_cost_per_mtok ahead of fixed_turn_cost_estimate.projections.
 Return JSON matching the provided schema.
@@ -52,7 +52,7 @@ export const ANONYMOUS_ACTION_SYSTEM_PROMPT = [
   "Choose exactly one anonymous candidate action for the agent's next turns, and how many turns to commit to it.",
   "Your choice is a lease: the chosen action serves that many consecutive turns before you are consulted again. A longer lease amortizes the cold start paid on its first turn across warm cache hits on the turns that follow; the lease ends early only if the task finishes or the provider fails.",
   "Each action's block lists its benchmark standing and its projected cost at each lease length you may choose.",
-  "Rank is the action's position among every model scored on that benchmark, 1 being best. Z is how many standard deviations that model sits above or below the mean of those models.",
+  "Rank is the action's position among the scored candidate actions on that benchmark, 1 being best. Z is how many standard deviations that action sits above or below the mean of those scored candidate actions.",
   "Cost is the projected spend for the whole agent loop over exactly the turns of each lease option, from current cache warmth. Compare actions at the lease you intend to pick.",
   "A missing benchmark score means that action was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.",
   "Prefer a cheaper action only when it is sufficiently likely to complete the task successfully.",
