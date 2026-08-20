@@ -79,7 +79,10 @@ export function buildSelectorInput(args: {
   // cross-model thinking-level ratios from the same eval card. Off by default
   // so existing routers keep measured-only scores.
   imputeEvalScores?: boolean;
+  // Calibrates cross-level ratios without adding these cards to imported_evals.
+  imputationReferenceEvals?: RouterEval[];
 }): SelectorInput | CustomSelectorInput {
+  const imputeEvalScores = args.imputeEvalScores ?? false;
   const input: SelectorInput = {
     candidate_pairs: args.candidates.map(({ model, reasoningEffort }) => ({
       model,
@@ -88,7 +91,8 @@ export function buildSelectorInput(args: {
     imported_evals: formatImportedEvals(
       args.evals,
       args.candidates,
-      args.imputeEvalScores ?? false,
+      imputeEvalScores,
+      args.imputationReferenceEvals ?? [],
     ),
     previous_decision: args.previousDecision
       ? {
@@ -121,8 +125,18 @@ function formatImportedEvals(
   evals: RouterEval[],
   candidates: RoutingCandidate[],
   imputeEvalScores: boolean,
+  imputationReferenceEvals: RouterEval[],
 ): Array<Record<string, unknown>> {
-  const thinkingLevelRatios = averageThinkingLevelRatios(evals);
+  const selectedEvalIds = new Set(evals.map((evalCard) => evalCard.id));
+  const ratioEvals = imputeEvalScores
+    ? [
+        ...evals,
+        ...imputationReferenceEvals.filter(
+          (evalCard) => !selectedEvalIds.has(evalCard.id),
+        ),
+      ]
+    : [];
+  const thinkingLevelRatios = averageThinkingLevelRatios(ratioEvals);
   return evals.flatMap((evalCard) => {
     const scores = matchingEvalScores(
       evalCard.scores,

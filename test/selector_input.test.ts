@@ -141,6 +141,43 @@ test("leaves the scorecard empty when imputation is off and only other levels ar
   expect(input.imported_evals).toHaveLength(0);
 });
 
+test("learns ratios from hidden reference evals without serializing them", () => {
+  const selected = {
+    ...evalCard([
+      { model_id: MID.model, thinking_level: "high", score: 80 },
+    ]),
+    id: "evl_selected",
+    name: "Selected Eval",
+  };
+  const reference = {
+    ...evalCard([
+      { model_id: "other/calibrator", thinking_level: "high", score: 80 },
+      { model_id: "other/calibrator", thinking_level: "medium", score: 60 },
+    ]),
+    id: "evl_reference",
+    name: "Unselected Reference Eval",
+  };
+
+  const input = buildSelectorInput({
+    candidates: [MID],
+    evals: [selected],
+    imputationReferenceEvals: [reference],
+    previousDecision: null,
+    costEstimates: null,
+    messages: [{ role: "user", content: "Fix the failing test." }],
+    imputeEvalScores: true,
+  });
+
+  expect(input.imported_evals).toHaveLength(1);
+  expect(input.imported_evals[0]?.["id"]).toBe("evl_selected");
+  expect(scores(input)[0]).toMatchObject({
+    model_id: MID.model,
+    thinking_level: "medium",
+    score: 60,
+    imputed: true,
+  });
+});
+
 test("imputes from average pairwise ratios on a negative score scale", () => {
   const card = {
     ...evalCard([

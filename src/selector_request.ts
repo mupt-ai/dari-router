@@ -38,6 +38,7 @@ export type SelectorRequestArgs = {
   modelFallbackEnabled?: boolean;
   fallbackRequiresDifferentProvider?: boolean;
   imputeEvalScores?: boolean;
+  imputationReferenceEvals?: RouterEval[];
 };
 
 // Builds the selector request, front-trimming conversation messages until the
@@ -85,6 +86,7 @@ export function buildSelectorRequest(args: SelectorRequestArgs): BuiltSelectorRe
     fallbackRequiresDifferentProvider:
       args.fallbackRequiresDifferentProvider,
     imputeEvalScores: args.imputeEvalScores,
+    imputationReferenceEvals: args.imputationReferenceEvals,
   });
   return {
     selectorInput,
