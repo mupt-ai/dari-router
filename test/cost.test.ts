@@ -28,7 +28,7 @@ const PRICING: Record<string, { input: number; output: number; cacheRead: number
   "anthropic/claude-opus-4-6": { input: 30, output: 150, cacheRead: 3, cacheWrite: 37.5 },
   "anthropic/claude-fable-5": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
   "openai/gpt-5.2": { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
-  "openai/gpt-5.6-sol": { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+  "openai/gpt-5.6-sol": { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
   "zai-org/GLM-5.2": { input: 1.4, output: 4.4, cacheRead: 0.14, cacheWrite: 0 },
   "fireworks/deepseek-ai/DeepSeek-V4-Pro": { input: 0.435, output: 0.87, cacheRead: 0, cacheWrite: 0 },
   "meta/muse-spark-1.1": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
@@ -921,12 +921,12 @@ test("a cold OpenAI partition is priced at the write rate, not the input rate", 
   });
 
   // Nothing is warm, so the whole prompt is written. Billing it as plain input
-  // would understate the turn by the write premium (6.25 vs 5.00 per Mtok).
+  // would understate the turn by the write premium (5.00 vs 4.00 per Mtok).
   expect(estimate.warm_tokens).toBe(0);
   const promptTokens = estimate.est_prompt_tokens;
   expect(promptTokens).toBeGreaterThan(1024);
-  expect(estimate.est_input_cost_usd).toBeCloseTo((promptTokens * 6.25) / 1_000_000, 10);
-  expect(estimate.est_input_cost_usd).toBeGreaterThan((promptTokens * 5) / 1_000_000);
+  expect(estimate.est_input_cost_usd).toBeCloseTo((promptTokens * 5) / 1_000_000, 10);
+  expect(estimate.est_input_cost_usd).toBeGreaterThan((promptTokens * 4) / 1_000_000);
 });
 
 test("a provider that does not bill writes still prices fresh tokens as input", () => {
