@@ -16,7 +16,9 @@ The root package also includes a Pi AI executor and a hosted Auto Router policy.
 npm install @mupt-ai/dari-router
 ```
 
-The package is ESM and requires Node.js 22.19 or later, or Bun.
+The package is ESM and requires Node.js 22.19 or later, or Bun. Pi AI is an
+optional peer dependency: install `@mupt-ai/pi-ai` when using
+`createPiRuntime`; deterministic subpaths do not install its provider SDKs.
 
 ## Minimal router
 
@@ -101,6 +103,16 @@ Pure OpenAI/Anthropic adapters and continuation-state helpers are under `/protoc
 
 ```ts
 import { openAIChatRequest, anthropicRequest } from "@mupt-ai/dari-router/protocols";
+```
+
+Browser-safe benchmark score imputation is available without Pi AI or provider
+SDKs:
+
+```ts
+import {
+  createThinkingLevelRatios,
+  resolveRouterEvalScore,
+} from "@mupt-ai/dari-router/eval-score-imputation";
 ```
 
 Most applications should use `createRouter`. Use `router.evaluatePolicy()` for stateless previews and `router.select()` when you need the same lease-aware selection used by `router.fetch()`.

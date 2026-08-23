@@ -1,6 +1,6 @@
 {
   "name": "@mupt-ai/dari-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "End-to-end TypeScript framework for routing across LLMs with built-in Pi AI execution and pluggable policies and executors.",
   "license": "Apache-2.0",
   "repository": {
@@ -39,6 +39,10 @@
       "types": "./dist/policy-engine.d.ts",
       "default": "./dist/policy-engine.js"
     },
+    "./eval-score-imputation": {
+      "types": "./dist/eval_score_imputation.d.ts",
+      "default": "./dist/eval_score_imputation.js"
+    },
     "./protocols": {
       "types": "./dist/protocols.d.ts",
       "default": "./dist/protocols.js"
@@ -46,14 +50,14 @@
   },
   "files": [
     "dist",
-    "src",
     "examples",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepublishOnly": "bun run typecheck && bun test && bun run build",
+    "test:package": "bash scripts/test-package.sh",
+    "prepublishOnly": "bun run typecheck && bun test && bun run test:package",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "example": "bun run examples/create_router.ts",
@@ -62,10 +66,16 @@
     "example:decision-pipeline": "bun run examples/basic_route.ts",
     "example:lease-stores": "bun run examples/lease_stores.ts"
   },
-  "dependencies": {
-    "@mupt-ai/pi-ai": "0.80.6-mupt.2"
+  "peerDependencies": {
+    "@mupt-ai/pi-ai": ">=0.80.6-mupt.2 <0.81.0"
+  },
+  "peerDependenciesMeta": {
+    "@mupt-ai/pi-ai": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@mupt-ai/pi-ai": "0.80.6-mupt.2",
     "@types/bun": "^1.3.4",
     "@types/node": "^24.10.2",
     "typescript": "^5.6.3"

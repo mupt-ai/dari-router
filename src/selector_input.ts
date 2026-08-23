@@ -3,6 +3,11 @@
 // The system prompts live in prompts.ts.
 
 import {
+  createThinkingLevelRatios,
+  resolveRouterEvalScore,
+  type ThinkingLevelRatios,
+} from "./eval_score_imputation.js";
+import {
   isRecord,
   REASONING_EFFORTS,
   routingCandidateKey,
@@ -144,7 +149,7 @@ function formatImportedEvals(
         ),
       ]
     : [];
-  const thinkingLevelRatios = averageThinkingLevelRatios(ratioEvals);
+  const thinkingLevelRatios = createThinkingLevelRatios(ratioEvals);
   return evals.flatMap((evalCard) => {
     const scores = matchingEvalScores(
       evalCard.scores,
@@ -174,134 +179,41 @@ function matchingEvalScores(
   imputeEvalScores: boolean,
   minScore: number,
   maxScore: number,
-  thinkingLevelRatios: ReadonlyMap<string, number>,
+  thinkingLevelRatios: ThinkingLevelRatios,
 ): Array<Record<string, unknown>> {
   const uniqueCandidates = new Map(
     candidates.map((candidate) => [routingCandidateKey(candidate), candidate]),
   );
   const resolvedScores = [...uniqueCandidates.values()]
     .map((candidate): ResolvedEvalScore | null => {
+      const resolved = resolveRouterEvalScore({
+        scores,
+        modelId: candidate.model,
+        thinkingLevel: candidate.reasoningEffort,
+        minScore,
+        maxScore,
+        impute: imputeEvalScores,
+        ratios: thinkingLevelRatios,
+      });
+      if (resolved === null) return null;
       const modelScores = scores.filter(
         (score) => score.model_id === candidate.model,
       );
-      const exact = modelScores.find(
-        (score) => score.thinking_level === candidate.reasoningEffort,
-      );
-      const generic = modelScores.find((score) => score.thinking_level == null);
-      const match = exact ?? generic;
-      if (match) {
-        return {
-          model_id: candidate.model,
-          thinking_level: candidate.reasoningEffort,
-          score: match.score,
-          notes: match.notes ?? null,
-        };
-      }
-      if (!imputeEvalScores) return null;
-      const imputed = pairwiseRatioScore(
-        candidate,
-        modelScores,
-        minScore,
-        maxScore,
-        thinkingLevelRatios,
-      );
-      if (imputed === null) return null;
+      const measured = resolved.imputed
+        ? null
+        : (modelScores.find(
+            (score) => score.thinking_level === candidate.reasoningEffort,
+          ) ?? modelScores.find((score) => score.thinking_level == null));
       return {
         model_id: candidate.model,
         thinking_level: candidate.reasoningEffort,
-        score: imputed,
-        notes: null,
-        imputed: true,
+        score: resolved.score,
+        notes: measured?.notes ?? null,
+        ...(resolved.imputed ? { imputed: true as const } : {}),
       };
     })
     .filter((score): score is ResolvedEvalScore => score !== null);
   return normalizeResolvedScores(resolvedScores);
-}
-
-// Learns every directed thinking-level ratio from all eval/model observations
-// that contain both levels. Scores are first mapped to [0, 1] using each eval's
-// declared range, so negative scales and differently-sized scales are safe.
-function averageThinkingLevelRatios(evals: RouterEval[]): Map<string, number> {
-  const samples = new Map<string, number[]>();
-  for (const evalCard of evals) {
-    const range = evalCard.max_score - evalCard.min_score;
-    if (!Number.isFinite(range) || range <= 0) continue;
-    const byModel = new Map<string, Map<ReasoningEffort, number>>();
-    for (const row of evalCard.scores) {
-      if (row.thinking_level == null || !Number.isFinite(row.score)) continue;
-      const levels = byModel.get(row.model_id) ?? new Map();
-      if (!levels.has(row.thinking_level)) {
-        levels.set(row.thinking_level, (row.score - evalCard.min_score) / range);
-      }
-      byModel.set(row.model_id, levels);
-    }
-    for (const levels of byModel.values()) {
-      for (const [targetLevel, targetScore] of levels) {
-        for (const [anchorLevel, anchorScore] of levels) {
-          if (targetLevel === anchorLevel || anchorScore <= 0) continue;
-          const ratio = targetScore / anchorScore;
-          if (!Number.isFinite(ratio) || ratio < 0) continue;
-          const key = thinkingLevelPairKey(targetLevel, anchorLevel);
-          const values = samples.get(key) ?? [];
-          values.push(ratio);
-          samples.set(key, values);
-        }
-      }
-    }
-  }
-  return new Map([...samples].map(([key, values]) => [key, mean(values)]));
-}
-
-function pairwiseRatioScore(
-  candidate: RoutingCandidate,
-  modelScores: RouterEvalScore[],
-  minScore: number,
-  maxScore: number,
-  thinkingLevelRatios: ReadonlyMap<string, number>,
-): number | null {
-  const range = maxScore - minScore;
-  if (!Number.isFinite(range) || range <= 0) return null;
-
-  const estimates: number[] = [];
-  for (const anchor of modelScores) {
-    if (anchor.thinking_level == null || !Number.isFinite(anchor.score)) continue;
-    const ratio = thinkingLevelRatios.get(
-      thinkingLevelPairKey(candidate.reasoningEffort, anchor.thinking_level),
-    );
-    if (ratio === undefined) continue;
-    const normalizedAnchor = (anchor.score - minScore) / range;
-    // Ratios cannot carry information from the scale floor: ratio learning
-    // excludes non-positive anchors for the same reason.
-    if (normalizedAnchor <= 0) continue;
-    const normalizedEstimate = normalizedAnchor * ratio;
-    // A single anchor can be invalid even when another anchor gives a useful
-    // estimate. Discard only this anchor rather than poisoning the average.
-    if (
-      Number.isFinite(normalizedEstimate) &&
-      normalizedEstimate >= 0 &&
-      normalizedEstimate <= 1
-    ) {
-      estimates.push(normalizedEstimate);
-    }
-  }
-  if (estimates.length === 0) return null;
-
-  const normalizedScore = mean(estimates);
-  // A ratio-derived score outside this eval's declared range is not credible;
-  // leave it missing rather than disguising the bad estimate as an endpoint.
-  if (normalizedScore < 0 || normalizedScore > 1) return null;
-  return round2(minScore + normalizedScore * range);
-}
-
-function thinkingLevelPairKey(
-  target: ReasoningEffort,
-  anchor: ReasoningEffort,
-): string {
-  return `${target}\u0000${anchor}`;
-}
-
-function mean(values: number[]): number {
-  return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
 // The selector compares current actions, so exact, generic, and imputed rows
@@ -332,6 +244,10 @@ function normalizeResolvedScores(
     rank_total: scores.length,
     z_score: stdDev === 0 ? 0 : round2((score.score - populationMean) / stdDev),
   }));
+}
+
+function mean(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
 function round2(value: number): number {
