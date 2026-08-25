@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from "./types.js";
+import { REASONING_EFFORTS, type ReasoningEffort } from "./types.js";
 
 export type EvalScoreForImputation = {
   model_id: string;
@@ -91,8 +91,10 @@ function pairwiseRatioScore(
   const estimates: number[] = [];
   for (const anchor of modelScores) {
     if (anchor.thinking_level == null || !Number.isFinite(anchor.score)) continue;
-    const ratio = ratios.get(
-      thinkingLevelPairKey(targetLevel, anchor.thinking_level),
+    const ratio = resolveThinkingLevelRatio(
+      ratios,
+      targetLevel,
+      anchor.thinking_level,
     );
     if (ratio === undefined) continue;
     const normalizedAnchor = (anchor.score - minScore) / range;
@@ -104,6 +106,50 @@ function pairwiseRatioScore(
   }
   if (estimates.length === 0) return null;
   return round2(minScore + mean(estimates) * range);
+}
+
+// Prefer a directly observed relationship. When none exists, compose the
+// shortest available chains (for example medium -> max -> xhigh) and average
+// their products. This lets sparse calibration cards connect levels without a
+// longer chain overriding stronger direct evidence.
+function resolveThinkingLevelRatio(
+  ratios: ThinkingLevelRatios,
+  targetLevel: ReasoningEffort,
+  anchorLevel: ReasoningEffort,
+): number | undefined {
+  const direct = ratios.get(thinkingLevelPairKey(targetLevel, anchorLevel));
+  if (direct !== undefined) return direct;
+
+  type RatioPaths = { sum: number; count: number };
+  let frontier = new Map<ReasoningEffort, RatioPaths>([
+    [anchorLevel, { sum: 1, count: 1 }],
+  ]);
+  const visited = new Set<ReasoningEffort>([anchorLevel]);
+
+  while (frontier.size > 0) {
+    const next = new Map<ReasoningEffort, RatioPaths>();
+    for (const [currentLevel, paths] of frontier) {
+      for (const nextLevel of REASONING_EFFORTS) {
+        if (visited.has(nextLevel)) continue;
+        const edge = ratios.get(
+          thinkingLevelPairKey(nextLevel, currentLevel),
+        );
+        if (edge === undefined || !Number.isFinite(edge) || edge < 0) continue;
+        const existing = next.get(nextLevel) ?? { sum: 0, count: 0 };
+        existing.sum += paths.sum * edge;
+        existing.count += paths.count;
+        next.set(nextLevel, existing);
+      }
+    }
+
+    const targetPaths = next.get(targetLevel);
+    if (targetPaths !== undefined) {
+      return targetPaths.sum / targetPaths.count;
+    }
+    for (const level of next.keys()) visited.add(level);
+    frontier = next;
+  }
+  return undefined;
 }
 
 function explicitScoresByModel(
