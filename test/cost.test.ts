@@ -29,6 +29,7 @@ const PRICING: Record<string, { input: number; output: number; cacheRead: number
   "anthropic/claude-fable-5": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
   "openai/gpt-5.2": { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
   "openai/gpt-5.6-sol": { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
+  "openai/gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
   "zai-org/GLM-5.2": { input: 1.4, output: 4.4, cacheRead: 0.14, cacheWrite: 0 },
   "fireworks/deepseek-ai/DeepSeek-V4-Pro": { input: 0.435, output: 0.87, cacheRead: 0, cacheWrite: 0 },
   "meta/muse-spark-1.1": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
@@ -96,6 +97,7 @@ function estimates(args: {
   averageOutputTokensByModel?: Readonly<
     Record<string, Partial<Record<ReasoningEffort, number>> | null>
   >;
+  executionProvider?: string;
 }) {
   const models = args.candidates ?? ["anthropic/claude-sonnet-4-6", "openai/gpt-5.2"];
   const candidates = models.map((model) => ({
@@ -123,7 +125,9 @@ function estimates(args: {
     averageOutputTokensByModel:
       args.averageOutputTokensByModel ??
       Object.fromEntries(models.map((model) => [model, OUTPUT_TOKENS])),
-    modelProvider,
+    modelProvider: args.executionProvider
+      ? () => args.executionProvider!
+      : modelProvider,
   });
 }
 
@@ -279,6 +283,34 @@ test("fixed-turn estimates use model-specific output-token averages", () => {
 
   expect(openAi.fixed_turn_cost_estimate?.output_tokens_per_turn).toBe(900);
   expect(anthropic.fixed_turn_cost_estimate?.output_tokens_per_turn).toBe(3100);
+});
+
+test("OpenAI subscription candidates retain projected loop costs", () => {
+  const candidates = ["openai/gpt-5.6-sol", "openai/gpt-5.6-luna"];
+  const results = estimates({
+    candidates,
+    hits: [],
+    reasoningEffort: "xhigh",
+    executionProvider: "openai-codex",
+    averageOutputTokensByModel: {
+      "openai/gpt-5.6-sol": { xhigh: 700 },
+      "openai/gpt-5.6-luna": { xhigh: 530 },
+    },
+  });
+
+  for (const estimate of results) {
+    expect(estimate.fixed_turn_cost_estimate).toMatchObject({
+      assumed_reasoning_effort: "xhigh",
+    });
+    expect(
+      estimate.fixed_turn_cost_estimate?.projections.map(
+        (projection) => projection.projected_turns,
+      ),
+    ).toEqual([...FIXED_TURN_COST_PROJECTED_TURNS]);
+    for (const projection of estimate.fixed_turn_cost_estimate?.projections ?? []) {
+      expect(projection.total_cost_usd).toBeGreaterThan(0);
+    }
+  }
 });
 
 test("fixed-turn estimates are omitted when a model has no output-token average", () => {

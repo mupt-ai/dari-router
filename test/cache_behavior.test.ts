@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import {
   anthropicMinCacheTokens,
   isAnthropicFamily,
+  isOpenAiFamily,
   openAiCachedPrefixTokens,
   promptCacheProviderForModel,
   providerMinCacheTokens,
@@ -22,6 +23,13 @@ test("classifies anthropic family for direct Anthropic only", () => {
   expect(isAnthropicFamily("claude-sonnet-4-6", "anthropic")).toBe(true);
   expect(() => isAnthropicFamily("claude-sonnet-4-6")).toThrow(
     "Unsupported model provider",
+  );
+});
+
+test("classifies the subscription adapter as OpenAI cache behavior", () => {
+  expect(isOpenAiFamily("openai/gpt-5.6-sol", "openai-codex")).toBe(true);
+  expect(promptCacheProviderForModel("openai/gpt-5.6-sol", "openai-codex")).toBe(
+    "openai",
   );
 });
 

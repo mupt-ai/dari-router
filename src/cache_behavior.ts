@@ -23,7 +23,11 @@ export type ModelProviderLookup = (model: string) => string;
 // prefix decides, and an id with no parseable prefix is an error, not a
 // silently generic model.
 function modelProvider(model: string, provider?: string): string {
-  return (provider ?? providerForModel(model)).toLowerCase();
+  const resolved = (provider ?? providerForModel(model)).toLowerCase();
+  // Personal ChatGPT subscriptions execute through the openai-codex adapter,
+  // but retain OpenAI's tokenizer and automatic prompt-cache behavior. Keep
+  // the execution-provider alias out of cache-family and cost classification.
+  return resolved === "openai-codex" ? "openai" : resolved;
 }
 
 export function isAnthropicFamily(model: string, provider?: string): boolean {
