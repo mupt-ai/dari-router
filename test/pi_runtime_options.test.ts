@@ -76,6 +76,42 @@ test("piOptions rejects options the fork hard-throws for, per API", async () => 
   );
   expect(stopOptions).toMatchObject({ stop: ["END"], topP: 0.5 });
 });
+
+test("Bedrock nests OpenAI reasoning effort in additionalModelRequestFields", async () => {
+  const model = piModel({
+    id: "global.openai.gpt-5.6-sol",
+    provider: "amazon-bedrock",
+    api: "bedrock-converse-stream",
+    reasoning: true,
+  });
+
+  for (const level of ["off", "low", "medium", "high", "xhigh", "max"] as const) {
+    const request = routerRequest({ reasoning: { effort: level } });
+    const execution = {
+      ...piExecution(request, model),
+      candidate: {
+        id: "openai/gpt-5.6-sol",
+        provider: model.provider,
+        api: model.api,
+      },
+      reasoningEffort: level,
+    };
+    const options = await piOptions({ apiKey: "test-key" }, execution, model);
+    const payload = await options.onPayload?.({
+      modelId: model.id,
+      additionalModelRequestFields: { existing: true },
+    }, model);
+
+    expect(payload).toEqual({
+      modelId: model.id,
+      additionalModelRequestFields: {
+        existing: true,
+        reasoning_effort: level === "off" ? "none" : level,
+      },
+    });
+  }
+});
+
 test("unsupported Pi options surface as 400s through the router", async () => {
   const registry = fakeRegistry([ANTHROPIC_MODEL], {});
   const runtime = await createPiRuntime({ registry, apiKey: "test-key" });

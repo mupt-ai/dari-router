@@ -76,7 +76,7 @@ export async function piOptions(
     options.thinkingBudgets = { [execution.reasoningEffort]: budget };
   }
 
-  const patch = payloadPatch(request, model);
+  const patch = payloadPatch(request, model, execution);
   if (patch !== undefined) options.onPayload = patch;
   return options;
 }
@@ -142,6 +142,7 @@ function piToolChoice(choice: RouterToolChoice): NonNullable<SimpleStreamOptions
 function payloadPatch(
   request: RouterRequest,
   model: PiModel,
+  execution: PiExecution,
 ): SimpleStreamOptions["onPayload"] | undefined {
   const strictTools = request.tools.some((tool) => tool.strict !== undefined);
   const parallel = request.parallelToolCalls;
@@ -151,6 +152,8 @@ function payloadPatch(
   );
   const imageDetailPatch = imageDetails.size > 0 &&
     (isOpenAIResponsesApi(model.api) || model.api === "openai-completions");
+  const bedrockOpenAIReasoningPatch = model.api === "bedrock-converse-stream" &&
+    execution.candidate.id.startsWith("openai/");
   if (
     imageDetails.size > 0 &&
     !imageDetailPatch &&
@@ -162,7 +165,13 @@ function payloadPatch(
       "pi_image_detail_unsupported",
     );
   }
-  if (!strictTools && parallel === undefined && !thinkingPatch && !imageDetailPatch) {
+  if (
+    !strictTools &&
+    parallel === undefined &&
+    !thinkingPatch &&
+    !imageDetailPatch &&
+    !bedrockOpenAIReasoningPatch
+  ) {
     return undefined;
   }
   if ((strictTools || parallel !== undefined) && !PAYLOAD_PATCH_APIS.has(model.api)) {
@@ -180,7 +189,27 @@ function payloadPatch(
     if (parallel !== undefined) payload = patchParallelTools(payload, parallel, model.api);
     if (imageDetailPatch) payload = patchImageDetails(payload, imageDetails);
     if (thinkingPatch) payload = patchAnthropicThinking(payload, request);
+    if (bedrockOpenAIReasoningPatch) {
+      payload = patchBedrockOpenAIReasoning(payload, execution.reasoningEffort);
+    }
     return payload;
+  };
+}
+
+function patchBedrockOpenAIReasoning(
+  payload: Record<string, unknown>,
+  effort: PiExecution["reasoningEffort"],
+): Record<string, unknown> {
+  // Converse carries provider-specific OpenAI fields inside
+  // additionalModelRequestFields, not at the request root.
+  return {
+    ...payload,
+    additionalModelRequestFields: {
+      ...(isRecord(payload.additionalModelRequestFields)
+        ? payload.additionalModelRequestFields
+        : {}),
+      reasoning_effort: effort === "off" ? "none" : effort,
+    },
   };
 }
 

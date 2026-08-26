@@ -56,6 +56,25 @@ test("compatibleProviderContinuation only replays to the same provider api", () 
   expect(compatibleProviderContinuation(openai, { ...OPENAI_SOURCE, api: "openai-completions" })).toBeNull();
 });
 
+test("Bedrock-sourced Anthropic thinking replays to the same Bedrock identity only", () => {
+  const bedrockSource = {
+    provider: "amazon-bedrock",
+    api: "bedrock-converse-stream",
+    model: "global.anthropic.claude-sonnet-5",
+  };
+  const thinking: ProviderContinuationState = {
+    kind: "anthropic_thinking",
+    source: bedrockSource,
+    thinking: "chain",
+    signature: "sig",
+  };
+  expect(compatibleProviderContinuation(thinking, bedrockSource)).toEqual(thinking);
+  expect(compatibleProviderContinuation(thinking, ANTHROPIC_SOURCE)).toBeNull();
+  expect(
+    compatibleProviderContinuation(thinking, { ...bedrockSource, model: "other" })
+  ).toBeNull();
+});
+
 test("sameProviderIdentity compares provider, api, and model", () => {
   expect(sameProviderIdentity(OPENAI_SOURCE, OPENAI_SOURCE)).toBe(true);
   expect(sameProviderIdentity(OPENAI_SOURCE, { ...OPENAI_SOURCE, model: "other" })).toBe(false);

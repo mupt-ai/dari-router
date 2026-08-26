@@ -103,7 +103,13 @@ export function compatibleProviderContinuation(
   if (continuation.kind === "openai_reasoning") {
     return isOpenAIResponsesApi(target.api) ? continuation : null;
   }
-  return target.api === "anthropic-messages" ? continuation : null;
+  // Anthropic thinking signatures also round-trip through Bedrock's Converse
+  // Stream transport (Claude on Bedrock rejects replayed thinking without its
+  // signature). sameProviderIdentity above already pins source === target, so
+  // this never crosses a Bedrock continuation into the Anthropic API or back.
+  return target.api === "anthropic-messages" || target.api === "bedrock-converse-stream"
+    ? continuation
+    : null;
 }
 
 export function sameProviderIdentity(a: ProviderIdentity, b: ProviderIdentity): boolean {
