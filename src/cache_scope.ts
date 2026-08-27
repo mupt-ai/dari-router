@@ -26,6 +26,7 @@ export const DEFAULT_REASONING_CACHE_SCOPES: Readonly<Record<string, ReasoningCa
   "fireworks:deepseek-ai/DeepSeek-V4-Pro-0813": "shared",
   "fireworks:deepseek-ai/DeepSeek-V4-Flash-0731": "shared",
   "fireworks:zai-org/GLM-5.2": "shared",
+  "fireworks:zai-org/GLM-5.3-Flash": "shared",
 };
 
 export type ReasoningCacheScopeLookup = (modelId: string) => ReasoningCacheScope;
