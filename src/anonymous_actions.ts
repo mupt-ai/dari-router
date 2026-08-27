@@ -70,11 +70,33 @@ export type AnonymousActionCost = {
   projections: TurnCostProjection[];
 };
 
+export type AnonymousLeaseHistoryEntry = {
+  action: string;
+  requested_turns: number;
+  completed_turns: number;
+  rationale: string;
+  last_agent_thought: string | null;
+  last_tool_call: {
+    name: string;
+    arguments: JsonValue;
+  } | null;
+  last_tool_result: JsonValue | null;
+  tool_errors: number | null;
+  files_changed: number | null;
+  tests: {
+    command: string;
+    status: "passed" | "failed" | "unknown";
+    result: JsonValue | null;
+  } | null;
+};
+
 export type AnonymousSelectorInput = {
   candidate_actions: Array<{ action: string }>;
   imported_evals: AnonymousEvalCard[];
   previous_action: { action: string } | null;
   cost_estimates: AnonymousActionCost[];
+  task: JsonValue | null;
+  lease_history: AnonymousLeaseHistoryEntry[];
   messages: JsonValue;
 };
 
@@ -97,6 +119,43 @@ export function assignAnonymousActions(
     action: actionForIndex(index),
     candidate,
   }));
+}
+
+// Assigns letters over the conversation's full candidate roster, then keeps
+// only the currently routable candidates with their letters intact. Letters
+// therefore stay fixed for the whole agent loop even when pruning shrinks the
+// menu mid-conversation; a pruned candidate's letter simply goes absent
+// instead of being reassigned.
+export function assignStableAnonymousActions(
+  allCandidates: readonly AnonymousActionCandidate[],
+  activeCandidates: readonly AnonymousActionCandidate[],
+  rng: Rng,
+): AnonymousActionSlot[] {
+  const slots = assignAnonymousActions(allCandidates, rng);
+  const byKey = new Map(
+    slots.map((slot) => [candidateKey(slot.candidate.model, slot.candidate.reasoningEffort), slot]),
+  );
+  const active = activeCandidates.map((candidate) => {
+    const slot = byKey.get(candidateKey(candidate.model, candidate.reasoningEffort));
+    if (slot === undefined) {
+      throw new Error(
+        `Active candidate ${candidate.model}/${candidate.reasoningEffort} is not on the anonymous action roster`,
+      );
+    }
+    return slot;
+  });
+  if (active.length < 2) {
+    throw new Error(
+      `Anonymous action routing requires at least two active candidates, got ${active.length}`,
+    );
+  }
+  // Menu order follows the roster's letter order, matching the single-roster
+  // behavior where slots come back in assignment order.
+  return active.sort((left, right) =>
+    left.action.length === right.action.length
+      ? left.action.localeCompare(right.action)
+      : left.action.length - right.action.length,
+  );
 }
 
 function actionForIndex(index: number): string {
@@ -127,6 +186,10 @@ export function anonymizeSelectorInput(
     imported_evals: anonymizeEvals(input["imported_evals"], byCandidate),
     previous_action: anonymizePreviousDecision(input["previous_decision"], byCandidate),
     cost_estimates: anonymizeCosts(input["cost_estimates"], byCandidate),
+    task: input["task"] === null || input["task"] === undefined
+      ? null
+      : jsonValue(input["task"], "selector input task"),
+    lease_history: anonymizeLeaseHistory(input["lease_history"], byCandidate),
     messages: jsonValue(input["messages"], "selector input messages"),
   };
 }
@@ -167,9 +230,38 @@ export function formatAnonymousPolicyInput(input: AnonymousSelectorInput): strin
     ...(input.previous_action === null
       ? []
       : [section("previous_action", input.previous_action.action)]),
+    ...(input.task === null ? [] : [section("task", JSON.stringify(input.task))]),
+    ...(input.lease_history.length === 0
+      ? []
+      : [section(
+          "lease_history",
+          input.lease_history.map((entry, index) => leaseBlock(entry, index)).join("\n\n"),
+        )]),
     section("conversation", JSON.stringify(input.messages)),
   ];
   return sections.join("\n\n");
+}
+
+function leaseBlock(entry: AnonymousLeaseHistoryEntry, index: number): string {
+  const lines = [
+    `<lease_${index + 1}>`,
+    `- Model: Action ${entry.action}`,
+    `- Requested Turns: ${entry.requested_turns}`,
+    `- Completed Turns: ${entry.completed_turns}`,
+    `- Rationale: ${JSON.stringify(entry.rationale)}`,
+    `- Last Agent Thought: ${jsonLabel(entry.last_agent_thought)}`,
+    `- Last Tool Call: ${jsonLabel(entry.last_tool_call)}`,
+    `- Last Tool Result: ${jsonLabel(entry.last_tool_result)}`,
+    `- Tool Errors: ${entry.tool_errors === null ? "Unknown" : entry.tool_errors}`,
+    `- Files Changed: ${entry.files_changed === null ? "Unknown" : entry.files_changed}`,
+    `- Tests: ${entry.tests === null ? "Not Run" : JSON.stringify(entry.tests)}`,
+    `</lease_${index + 1}>`,
+  ];
+  return lines.join("\n");
+}
+
+function jsonLabel(value: JsonValue | null): string {
+  return value === null ? "None" : JSON.stringify(value);
 }
 
 function section(name: string, body: string): string {
@@ -444,6 +536,145 @@ function anonymizeCosts(
       },
     ];
   });
+}
+
+function anonymizeLeaseHistory(
+  value: unknown,
+  byCandidate: ReadonlyMap<string, string>,
+): AnonymousLeaseHistoryEntry[] {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Selector input lease_history must be an array");
+  }
+  const candidateModels = [...byCandidate.keys()].map((key) => key.split("\u0000", 1)[0]!);
+  return value.map((entry, index) => {
+    const label = `selector lease_history[${index}]`;
+    const history = jsonRecord(entry, label);
+    const candidate = jsonRecord(history["candidate"], `${label}.candidate`);
+    const lastToolCall = nullableRecord(history["last_tool_call"], `${label}.last_tool_call`);
+    const tests = nullableRecord(history["tests"], `${label}.tests`);
+    const testStatus = tests?.["status"];
+    if (
+      tests !== null &&
+      testStatus !== "passed" &&
+      testStatus !== "failed" &&
+      testStatus !== "unknown"
+    ) {
+      throw new Error(`${label}.tests.status must be passed, failed, or unknown`);
+    }
+    const requestedTurns = positiveInteger(
+      history["requested_turns"],
+      `${label}.requested_turns`,
+    );
+    const completedTurns = nonNegativeInteger(
+      history["completed_turns"],
+      `${label}.completed_turns`,
+    );
+    if (completedTurns > requestedTurns) {
+      throw new Error(`${label}.completed_turns must not exceed requested_turns`);
+    }
+    return {
+      action: actionForCandidate(
+        byCandidate,
+        requiredString(candidate["model"], `${label}.candidate.model`),
+        requiredString(candidate["thinking_level"], `${label}.candidate.thinking_level`),
+      ),
+      requested_turns: requestedTurns,
+      completed_turns: completedTurns,
+      rationale: scrubCandidateNames(
+        stringOrEmpty(history["rationale"], `${label}.rationale`),
+        candidateModels,
+      ) as string,
+      last_agent_thought: nullableString(history["last_agent_thought"], `${label}.last_agent_thought`),
+      last_tool_call: lastToolCall === null
+        ? null
+        : {
+            name: requiredString(lastToolCall["name"], `${label}.last_tool_call.name`),
+            arguments: scrubCandidateNames(
+              jsonValue(lastToolCall["arguments"], `${label}.last_tool_call.arguments`),
+              candidateModels,
+            ),
+          },
+      last_tool_result: history["last_tool_result"] === null || history["last_tool_result"] === undefined
+        ? null
+        : scrubCandidateNames(
+            jsonValue(history["last_tool_result"], `${label}.last_tool_result`),
+            candidateModels,
+          ),
+      tool_errors: history["tool_errors"] === null || history["tool_errors"] === undefined
+        ? null
+        : nonNegativeInteger(history["tool_errors"], `${label}.tool_errors`),
+      files_changed: history["files_changed"] === null || history["files_changed"] === undefined
+        ? null
+        : nonNegativeInteger(history["files_changed"], `${label}.files_changed`),
+      tests: tests === null
+        ? null
+        : {
+            command: stringOrEmpty(tests["command"], `${label}.tests.command`),
+            status: testStatus as "passed" | "failed" | "unknown",
+            result: tests["result"] === null || tests["result"] === undefined
+              ? null
+              : scrubCandidateNames(
+                  jsonValue(tests["result"], `${label}.tests.result`),
+                  candidateModels,
+                ),
+          },
+    };
+  }).map((entry) => ({
+    ...entry,
+    last_agent_thought: entry.last_agent_thought === null
+      ? null
+      : scrubCandidateNames(entry.last_agent_thought, candidateModels) as string,
+  }));
+}
+
+function nullableRecord(
+  value: unknown,
+  label: string,
+): Record<string, JsonValue> | null {
+  if (value === null || value === undefined) return null;
+  return jsonRecord(value, label);
+}
+
+function nullableString(value: unknown, label: string): string | null {
+  if (value === null || value === undefined) return null;
+  return stringOrEmpty(value, label);
+}
+
+function stringOrEmpty(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  return value;
+}
+
+function nonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  const parsed = nonNegativeInteger(value, label);
+  if (parsed === 0) throw new Error(`${label} must be a positive integer`);
+  return parsed;
+}
+
+function scrubCandidateNames(value: JsonValue, candidateModels: readonly string[]): JsonValue {
+  if (typeof value === "string") {
+    return candidateModels.reduce(
+      (scrubbed, model) => scrubbed.split(model).join("anonymous candidate"),
+      value,
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubCandidateNames(item, candidateModels));
+  }
+  if (isRecordValue(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, scrubCandidateNames(item, candidateModels)]),
+    );
+  }
+  return value;
 }
 
 function requiredNumber(value: JsonValue | undefined, label: string): number {

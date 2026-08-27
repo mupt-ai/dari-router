@@ -4,6 +4,7 @@ import {
   buildSelectorInput,
   type CustomSelectorInput,
   type SelectorInput,
+  type SelectorLeaseHistoryEntry,
 } from "./selector_input.js";
 import { trimMessagesFromFront } from "./selector_truncation.js";
 import { REASONING_EFFORTS } from "./types.js";
@@ -35,6 +36,8 @@ export type SelectorRequestArgs = {
   } | null;
   selectorModel: string;
   messages: ChatMessage[];
+  task?: ChatMessage | null;
+  leaseHistory?: SelectorLeaseHistoryEntry[];
   modelFallbackEnabled?: boolean;
   fallbackRequiresDifferentProvider?: boolean;
   imputeEvalScores?: boolean;
@@ -80,6 +83,8 @@ export function buildSelectorRequest(args: SelectorRequestArgs): BuiltSelectorRe
     previousDecision: args.previousDecision ?? null,
     costEstimates: args.costEstimates ?? null,
     messages: args.messages,
+    task: args.task,
+    leaseHistory: args.leaseHistory,
     customRules: args.customRules,
     defaultTarget: args.defaultTarget,
     modelFallbackEnabled: args.modelFallbackEnabled,

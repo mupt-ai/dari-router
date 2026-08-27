@@ -22,6 +22,10 @@ export type CustomDefaultTarget = {
 
 type CandidateSet = {
   candidates: RoutingCandidate[];
+  // The configured roster before pruning. Anonymous-action letters are
+  // assigned over it so each candidate keeps one letter for the whole
+  // conversation even when pruning shrinks the routable set.
+  allCandidates: RoutingCandidate[];
   costEstimates: CandidateCostEstimate[];
 };
 
@@ -72,6 +76,7 @@ export function resolveStrategyCandidates(
     return {
       strategy: "slm",
       candidates: pruned.candidates,
+      allCandidates: [...args.candidates],
       costEstimates: pruned.costEstimates,
       pruning: pruned.audit,
     };
@@ -82,6 +87,7 @@ export function resolveStrategyCandidates(
     return {
       strategy: "custom",
       candidates: [],
+      allCandidates: [...args.candidates],
       costEstimates: [],
       pruning: null,
       custom: null,
@@ -132,6 +138,7 @@ function resolveCustomCandidates(
   return {
     strategy: "custom",
     candidates: pruned.candidates,
+    allCandidates: configuredCandidates,
     costEstimates: pruned.costEstimates,
     pruning: pruned.audit,
     custom: {

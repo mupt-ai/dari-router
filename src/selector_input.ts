@@ -20,12 +20,35 @@ import {
   type RouterEvalScore,
   type RoutingCandidate,
 } from "./types.js";
+import type { JsonValue } from "./json.js";
 
 const IMAGE_OMITTED_PLACEHOLDER = "<image omitted>";
 
-type SelectorCandidate = {
+export type SelectorCandidate = {
   model: string;
   thinking_level: RoutingCandidate["reasoningEffort"];
+};
+
+export type SelectorLeaseTestObservation = {
+  command: string;
+  status: "passed" | "failed" | "unknown";
+  result: JsonValue | null;
+};
+
+export type SelectorLeaseHistoryEntry = {
+  candidate: SelectorCandidate;
+  requested_turns: number;
+  completed_turns: number;
+  rationale: string;
+  last_agent_thought: string | null;
+  last_tool_call: {
+    name: string;
+    arguments: JsonValue;
+  } | null;
+  last_tool_result: JsonValue | null;
+  tool_errors: number | null;
+  files_changed: number | null;
+  tests: SelectorLeaseTestObservation | null;
 };
 
 type SelectorPreviousDecision = SelectorCandidate & { reason: string };
@@ -43,6 +66,12 @@ export type SelectorInput = {
   imported_evals: Array<Record<string, unknown>>;
   previous_decision: SelectorPreviousDecision | null;
   cost_estimates: CandidateCostEstimate[] | null;
+  // Kept outside the compactable conversation so a long agent run never
+  // loses the task the selector is routing.
+  task?: ChatMessage | null;
+  // Named candidates remain internal here. The anonymous policy boundary
+  // rewrites every entry to the current action permutation.
+  lease_history?: SelectorLeaseHistoryEntry[];
   messages: ChatMessage[];
 };
 
@@ -81,6 +110,8 @@ export function buildSelectorInput(args: {
   previousDecision: PreviousDecision | null;
   costEstimates: CandidateCostEstimate[] | null;
   messages: ChatMessage[];
+  task?: ChatMessage | null;
+  leaseHistory?: SelectorLeaseHistoryEntry[];
   customRules?: CustomRouterRule[];
   defaultTarget?: {
     model: string;
@@ -115,6 +146,11 @@ export function buildSelectorInput(args: {
         }
       : null,
     cost_estimates: args.costEstimates,
+    // Only callers that computed lease context provide these; omitting the
+    // keys entirely keeps the input byte-identical to the shape before task
+    // and lease history existed, for routers with lease context disabled.
+    ...(args.task !== undefined ? { task: args.task } : {}),
+    ...(args.leaseHistory !== undefined ? { lease_history: args.leaseHistory } : {}),
     messages: args.messages,
   };
   if (args.customRules !== undefined) {

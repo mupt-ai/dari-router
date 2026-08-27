@@ -4,6 +4,7 @@ import type { JsonObject } from "../src/json.js";
 import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "../src/prompts.js";
 import {
   assignAnonymousActions,
+  assignStableAnonymousActions,
   anonymizeSelectorInput,
   buildAnonymousPolicyPrompt,
   parseAnonymousActionSelection,
@@ -119,6 +120,28 @@ function selectorInput(): JsonObject {
         fixed_turn_cost_estimate: null,
       },
     ],
+    task: { role: "user", content: "Fix the failing test." },
+    lease_history: [
+      {
+        candidate: { model: MEDIUM, thinking_level: "medium" },
+        requested_turns: 10,
+        completed_turns: 7,
+        rationale: `Action C looked sufficient; never expose ${MEDIUM}.`,
+        last_agent_thought: "The parser is fixed; run the focused test.",
+        last_tool_call: {
+          name: "bash",
+          arguments: { command: "bun test parser.test.ts" },
+        },
+        last_tool_result: { output: "1 passed" },
+        tool_errors: 1,
+        files_changed: 2,
+        tests: {
+          command: "bun test parser.test.ts",
+          status: "passed",
+          result: "1 passed",
+        },
+      },
+    ],
     messages: [{ role: "user", content: "Fix the failing test." }],
   };
 }
@@ -146,6 +169,14 @@ test("deterministically anonymizes every candidate-bearing selector field", () =
   expect(serialized).toContain("## Action B");
   expect(serialized).toContain("## Action C");
   expect(serialized).toContain("<conversation>");
+  expect(serialized).toContain('<task>\n{"role":"user","content":"Fix the failing test."}\n</task>');
+  expect(serialized).toContain("<lease_1>");
+  expect(serialized).toContain(`- Model: Action ${actionFor(slots, MEDIUM)}`);
+  expect(serialized).toContain("- Requested Turns: 10");
+  expect(serialized).toContain("- Completed Turns: 7");
+  expect(serialized).toContain("- Tool Errors: 1");
+  expect(serialized).toContain('"status":"passed"');
+  expect(serialized).toContain("anonymous candidate");
   expect(serialized).toContain("Fix the failing test.");
 });
 
@@ -179,12 +210,16 @@ test("omits benchmark sections and cost details it has no data for", () => {
     imported_evals: [],
     previous_decision: null,
     cost_estimates: null,
+    task: null,
+    lease_history: [],
   };
   const prompt = buildAnonymousPolicyPrompt(anonymizeSelectorInput(bare, slots), slots);
   const serialized = prompt.messages[1].content;
 
   expect(serialized).not.toContain("<benchmarks>");
   expect(serialized).not.toContain("<previous_action>");
+  expect(serialized).not.toContain("<task>");
+  expect(serialized).not.toContain("<lease_history>");
   expect(block(serialized, "A")).toEqual([]);
 });
 
@@ -354,6 +389,17 @@ test("rejects impossible ranks and inconsistent resolved-candidate denominators"
   );
 });
 
+test("rejects impossible lease history turn counts", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const input = selectorInput();
+  const lease = (input["lease_history"] as JsonObject[])[0]!;
+  lease["completed_turns"] = 11;
+
+  expect(() => anonymizeSelectorInput(input, slots)).toThrow(
+    "completed_turns must not exceed requested_turns",
+  );
+});
+
 test("an empty lease menu parses per-turn completions", () => {
   const slots = assignAnonymousActions(CANDIDATES, rng(42));
 
@@ -373,4 +419,31 @@ test("rejects malformed action completions", () => {
     "action must be a string",
   );
   expect(() => parseAnonymousActionSelection("[]", slots)).toThrow("must be an object");
+});
+
+test("stable letters survive pruning of the active menu", () => {
+  const roster = [
+    { model: "m/alpha", reasoningEffort: "low" },
+    { model: "m/beta", reasoningEffort: "high" },
+    { model: "m/gamma", reasoningEffort: "high" },
+    { model: "m/delta", reasoningEffort: "medium" },
+  ];
+  const rng = () => 0.42;
+  const full = assignStableAnonymousActions(roster, roster, rng);
+  const pruned = assignStableAnonymousActions(
+    roster,
+    [roster[1]!, roster[3]!],
+    rng,
+  );
+  const letterFor = (slots: ReturnType<typeof assignStableAnonymousActions>, model: string) =>
+    slots.find((slot) => slot.candidate.model === model)?.action;
+  expect(letterFor(pruned, "m/beta")).toBe(letterFor(full, "m/beta"));
+  expect(letterFor(pruned, "m/delta")).toBe(letterFor(full, "m/delta"));
+  expect(pruned).toHaveLength(2);
+  expect(() =>
+    assignStableAnonymousActions(roster, [{ model: "m/other", reasoningEffort: "low" }, roster[0]!], rng),
+  ).toThrow(/not on the anonymous action roster/);
+  expect(() =>
+    assignStableAnonymousActions(roster, [roster[0]!], rng),
+  ).toThrow(/at least two active candidates/);
 });
