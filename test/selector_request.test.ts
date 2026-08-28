@@ -8,12 +8,17 @@ const CANDIDATES: RoutingCandidate[] = [
   { model: "openai/gpt-4.1-mini", reasoningEffort: "medium" },
 ];
 
-function build(messages: ChatMessage[], contextWindowChars: number) {
+function build(
+  messages: ChatMessage[],
+  contextWindowChars: number,
+  task?: ChatMessage,
+) {
   return buildSizedSelectorRequest({
     candidates: CANDIDATES,
     selectorModel: "selector/model",
     contextWindowChars,
     messages,
+    ...(task === undefined ? {} : { task }),
   });
 }
 
@@ -38,6 +43,45 @@ test("oversized conversations trim oldest messages first", () => {
   expect(String(sent[0]?.content)).toBe("<earlier messages truncated for routing>");
   expect(sent.some((message) => String(message.content).includes("the question that matters"))).toBe(true);
   expect(sent.some((message) => String(message.content).includes("x".repeat(16_000)))).toBe(false);
+});
+
+test("oversized retained tasks compact after older history", () => {
+  const task: ChatMessage = {
+    role: "user",
+    content: `task-start-${"x".repeat(300_000)}-task-end`,
+  };
+  const built = build(
+    [task, { role: "user", content: "latest routing signal" }],
+    65_536 * 4,
+    task,
+  );
+
+  expect(JSON.stringify(built.selectorRequest.messages).length).toBeLessThanOrEqual(65_536 * 4);
+  expect(String(built.selectorInput.task?.content)).toStartWith("task-start-");
+  expect(String(built.selectorInput.task?.content)).toContain(
+    "...[original task truncated for routing]...",
+  );
+  expect(String(built.selectorInput.task?.content)).toEndWith("-task-end");
+  expect(built.selectorInput.messages.at(-1)?.content).toBe("latest routing signal");
+  expect(JSON.stringify(built.selectorInput.messages)).not.toContain("x".repeat(100));
+});
+
+test("oversized first-turn tasks preserve both task edges", () => {
+  const task: ChatMessage = {
+    role: "user",
+    content: `task-start-${"x".repeat(300_000)}-task-end`,
+  };
+  const built = build([task], 65_536 * 4, task);
+
+  expect(JSON.stringify(built.selectorRequest.messages).length).toBeLessThanOrEqual(65_536 * 4);
+  expect(String(built.selectorInput.task?.content)).toStartWith("task-start-");
+  expect(String(built.selectorInput.task?.content)).toContain(
+    "...[original task truncated for routing]...",
+  );
+  expect(String(built.selectorInput.task?.content)).toEndWith("-task-end");
+  expect(String(built.selectorInput.messages[0]?.content)).toStartWith(
+    "<earlier messages truncated for routing>",
+  );
 });
 
 test("throws a configuration error when trimming cannot converge", () => {

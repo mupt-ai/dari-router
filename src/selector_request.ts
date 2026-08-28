@@ -6,7 +6,11 @@ import {
   type SelectorInput,
   type SelectorLeaseHistoryEntry,
 } from "./selector_input.js";
-import { trimMessagesFromFront } from "./selector_truncation.js";
+import {
+  olderMessageChars,
+  trimMessagesFromFront,
+  trimTaskMessage,
+} from "./selector_truncation.js";
 import { REASONING_EFFORTS } from "./types.js";
 import type {
   CandidateCostEstimate,
@@ -44,30 +48,80 @@ export type SelectorRequestArgs = {
   imputationReferenceEvals?: RouterEval[];
 };
 
-// Builds the selector request, front-trimming conversation messages until the
-// serialized prompt fits the selector's context window. The window size is an
-// explicit input (in characters) so the core stays free of model-registry
-// lookups.
+// Builds the selector request, trimming old conversation history first and an
+// oversized retained task only when necessary. The window size is an explicit
+// input (in characters) so the core stays free of model-registry lookups.
 export function buildSizedSelectorRequest(
   args: SelectorRequestArgs & { contextWindowChars: number },
 ): BuiltSelectorRequest {
   let messages = args.messages;
-  let built = buildSelectorRequest({ ...args, messages });
-  let previousInputChars = Number.POSITIVE_INFINITY;
+  let task = args.task;
+  const taskExceedsWindow =
+    task !== undefined
+    && task !== null
+    && JSON.stringify(task).length > args.contextWindowChars;
+  let built = buildSelectorRequest({ ...args, messages, task });
 
   while (true) {
     const inputChars = selectorRequestInputChars(built.selectorRequest);
     if (inputChars <= args.contextWindowChars) return built;
-    if (inputChars >= previousInputChars) {
-      throw new RouterCoreError(
-        "configuration",
-        `Selector prompt cannot fit configured context window for ${args.selectorModel}.`,
-        "configuration_error"
+    const dropChars = inputChars - args.contextWindowChars;
+
+    const removableHistoryChars = olderMessageChars(messages);
+    if (removableHistoryChars > 0) {
+      const trimmedMessages = trimMessagesFromFront(
+        messages,
+        Math.min(dropChars, removableHistoryChars),
       );
+      const messagesBuilt = buildSelectorRequest({ ...args, messages: trimmedMessages, task });
+      if (selectorRequestInputChars(messagesBuilt.selectorRequest) < inputChars) {
+        messages = trimmedMessages;
+        built = messagesBuilt;
+        continue;
+      }
     }
-    previousInputChars = inputChars;
-    messages = trimMessagesFromFront(messages, inputChars - args.contextWindowChars);
-    built = buildSelectorRequest({ ...args, messages });
+
+    // If the retained task cannot fit the whole window by itself, compact it
+    // before touching the latest conversation turn. Smaller tasks keep the
+    // previous behavior: the conversation view shrinks first.
+    if (taskExceedsWindow && task !== undefined && task !== null) {
+      const taskChars = JSON.stringify(task).length;
+      const maxTaskDropChars = Math.max(
+        0,
+        taskChars - Math.floor(args.contextWindowChars / 2),
+      );
+      const trimmedTask = trimTaskMessage(task, Math.min(dropChars, maxTaskDropChars));
+      const taskBuilt = buildSelectorRequest({ ...args, messages, task: trimmedTask });
+      if (selectorRequestInputChars(taskBuilt.selectorRequest) < inputChars) {
+        task = trimmedTask;
+        built = taskBuilt;
+        continue;
+      }
+    }
+
+    const trimmedMessages = trimMessagesFromFront(messages, dropChars);
+    const messagesBuilt = buildSelectorRequest({ ...args, messages: trimmedMessages, task });
+    if (selectorRequestInputChars(messagesBuilt.selectorRequest) < inputChars) {
+      messages = trimmedMessages;
+      built = messagesBuilt;
+      continue;
+    }
+
+    if (task !== undefined && task !== null) {
+      const trimmedTask = trimTaskMessage(task, dropChars);
+      const taskBuilt = buildSelectorRequest({ ...args, messages, task: trimmedTask });
+      if (selectorRequestInputChars(taskBuilt.selectorRequest) < inputChars) {
+        task = trimmedTask;
+        built = taskBuilt;
+        continue;
+      }
+    }
+
+    throw new RouterCoreError(
+      "configuration",
+      `Selector prompt cannot fit configured context window for ${args.selectorModel}.`,
+      "configuration_error"
+    );
   }
 }
 

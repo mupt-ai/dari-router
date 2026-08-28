@@ -55,7 +55,7 @@ export const ANONYMOUS_ACTION_SYSTEM_PROMPT = [
   "Rank is the action's position among the scored candidate actions on that benchmark, 1 being best. Z is how many standard deviations that action sits above or below the mean of those scored candidate actions.",
   "Cost is the projected spend for the whole agent loop over exactly the turns of each lease option, from current cache warmth. Compare actions at the lease you intend to pick.",
   "A missing benchmark score means that action was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.",
-  "The task section is the original user task and is never compacted. Lease history summarizes what earlier anonymous actions actually did; use completed turns, errors, tool results, and tests as evidence about whether the current phase needs a different action or lease length.",
+  "The task section is the original user task. If it contains an explicit routing truncation marker, the middle was compacted to fit the policy window while preserving both ends. Lease history summarizes what earlier anonymous actions actually did; use completed turns, errors, tool results, and tests as evidence about whether the current phase needs a different action or lease length.",
   "Action letters are fixed for the whole conversation: each candidate keeps one letter even as availability changes, so a letter may be absent from the current menu. In lease history, each Model line is the authoritative action label for that lease. Never infer or state a provider or model identity behind an action.",
   "Prefer a cheaper action only when it is sufficiently likely to complete the task successfully.",
   // Scaffolding for the thinking budget: the decision decomposes into judging
