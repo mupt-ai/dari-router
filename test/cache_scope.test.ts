@@ -8,6 +8,7 @@ import {
 
 const SOL = "openai/gpt-5.6-sol";
 const GLM = "zai-org/GLM-5.2";
+const GLM_5_3 = "zai-org/GLM-5.3";
 
 test("partition keys follow the provider's reasoning cache scope", () => {
   // Effort-keyed: each effective effort warms its own partition, and an entry
@@ -20,6 +21,9 @@ test("partition keys follow the provider's reasoning cache scope", () => {
   const fireworksScope = (model: string) => reasoningCacheScope(model, "fireworks");
   expect(cachePartitionKey(GLM, "off", fireworksScope)).toBe(cachePartitionKey(GLM, "medium", fireworksScope));
   expect(cachePartitionKey(GLM, "off", fireworksScope)).not.toBe(cachePartitionKey(SOL, "off"));
+
+  // Fireworks GLM 5.3 uses separate provider cache partitions by effort.
+  expect(cachePartitionKey(GLM_5_3, "low", fireworksScope)).not.toBe(cachePartitionKey(GLM_5_3, "max", fireworksScope));
   expect(cachePartitionKey(GLM, "off", fireworksScope, "fireworks")).not.toBe(
     cachePartitionKey(GLM, "off", () => "effort_keyed", "openrouter"),
   );
