@@ -166,6 +166,66 @@ test("an unexpired lease surfaces only while its target is still a candidate", (
   expect(narrowed.activeLease).toBeUndefined();
 });
 
+test("a trusted conversation id recovers a lease without claiming cache warmth", () => {
+  const leasedHit = {
+    ...routeInput().prefixHits![0]!,
+    hash: "old-request-head",
+    lease_turns_remaining: 4,
+  };
+
+  const prepared = prepareRoute(routeInput({
+    conversationId: "conv_1",
+    prefixHits: [leasedHit],
+  }));
+
+  expect(prepared.conversationId).toBe("conv_1");
+  expect(prepared.identityMatchDepth).toBeNull();
+  expect(prepared.activeLease).toEqual({
+    model: MINI,
+    reasoningEffort: "medium",
+    turnsRemaining: 4,
+  });
+  expect(prepared.costEstimates.find(
+    (estimate) => estimate.model === MINI,
+  )?.warm_tokens).toBe(0);
+});
+
+test("a touched shallower row does not shadow the latest serving decision", () => {
+  const base = routeInput().prefixHits![0]!;
+  // A warm cache read bumps a shallower row's updated_at to the serving
+  // turn's clock without rewriting its lease fields, so the touch shares the
+  // newest clock with the turn's own deeper write.
+  const touched = {
+    ...base,
+    hash: "old-shallow",
+    message_depth: 1,
+    lease_turns_remaining: 6,
+    updated_at: HIT_WRITTEN_AT,
+  };
+  const served = {
+    ...base,
+    hash: "latest-deep",
+    message_depth: 5,
+    lease_turns_remaining: 2,
+    updated_at: HIT_WRITTEN_AT,
+  };
+
+  // The deeper row at the newest clock carries the latest serving decision,
+  // whichever order the host resolved the rows in.
+  for (const prefixHits of [[touched, served], [served, touched]]) {
+    const prepared = prepareRoute(routeInput({
+      conversationId: "conv_1",
+      prefixHits,
+    }));
+    expect(prepared.activeLease).toEqual({
+      model: MINI,
+      reasoningEffort: "medium",
+      turnsRemaining: 2,
+    });
+    expect(prepared.identityMatchDepth).toBeNull();
+  }
+});
+
 test("a prefetched lease is recovered from any recent conversation row", () => {
   const base = routeInput().prefixHits![0]!;
   // The prefetch landed on a shallower row; a later turn appended the deeper

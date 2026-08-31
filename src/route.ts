@@ -109,6 +109,10 @@ type CandidatePreparationSharedInput = {
   // The request's loose chain (client-durable canonicalization), as computed
   // by the host's fingerprinting. Identity-only; never used for warmth.
   looseChain?: readonly string[];
+  // A trusted harness conversation id can recover continuity when its client
+  // changes the request head (for example, Claude Code changes its tool set).
+  // This fallback is identity-only and never contributes cache warmth.
+  conversationId?: string;
   toolChoiceFp: string;
   responseFormatFp: string;
   previousDecision?: PreviousDecision;
@@ -167,6 +171,37 @@ export function prepareCandidates(input: CandidatePreparationInput): CandidatePr
   );
 }
 
+function newestConversationHit(
+  hits: RouterPrefixHit[] | undefined,
+  conversationId: string | undefined,
+): PrefixHit | undefined {
+  if (conversationId === undefined) return undefined;
+  let newest: RouterPrefixHit | undefined;
+  let newestUpdatedAtMs = Number.NEGATIVE_INFINITY;
+  let newestDepth = Number.NEGATIVE_INFINITY;
+  for (const entry of hits ?? []) {
+    if (entry.conversation_id !== conversationId) continue;
+    const parsedUpdatedAtMs = Date.parse(entry.updated_at);
+    const updatedAtMs = Number.isFinite(parsedUpdatedAtMs)
+      ? parsedUpdatedAtMs
+      : Number.NEGATIVE_INFINITY;
+    // A warm cache read bumps updated_at on a shallower row without
+    // rewriting its lease fields, and that touch shares the serving turn's
+    // clock with the turn's own write, so at equal freshness the deeper row
+    // is the row that carries the latest serving decision.
+    if (
+      newest === undefined ||
+      updatedAtMs > newestUpdatedAtMs ||
+      (updatedAtMs === newestUpdatedAtMs && entry.message_depth > newestDepth)
+    ) {
+      newest = entry;
+      newestUpdatedAtMs = updatedAtMs;
+      newestDepth = entry.message_depth;
+    }
+  }
+  return newest === undefined ? undefined : { entry: newest, depth: 0 };
+}
+
 function prepareCandidatesWithAccounting(
   input: CandidatePreparationSharedInput,
   promptAccounting: CandidatePromptAccounting,
@@ -217,10 +252,10 @@ function prepareCandidatesWithAccounting(
       input.chainsByModel,
       input.looseChain,
       input.prefixHits,
-    );
+    ) ?? newestConversationHit(input.prefixHits, input.conversationId);
     if (identityHit) {
       conversationId = identityHit.entry.conversation_id;
-      identityMatchDepth = identityHit.depth;
+      identityMatchDepth = identityHit.depth > 0 ? identityHit.depth : null;
       previousDecision ??= previousDecisionFromHit(
         identityHit.entry,
         compatible.candidates,
