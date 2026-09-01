@@ -1,4 +1,4 @@
-import { canonicalModelId, nativeModelId, providerForModel } from "./model_ids.js";
+import { canonicalModelId, modelFamilyProvider, nativeModelId, providerForModel } from "./model_ids.js";
 import type { RouterPrefixHit } from "./types.js";
 
 // Provider prompt caches stop serving a prefix roughly five minutes after it
@@ -21,29 +21,24 @@ export type ModelProviderLookup = (model: string) => string;
 
 // Callers that know the serving provider pass it; otherwise the model id's
 // prefix decides, and an id with no parseable prefix is an error, not a
-// silently generic model.
-function modelProvider(model: string, provider?: string): string {
-  const resolved = (provider ?? providerForModel(model)).toLowerCase();
-  // Personal ChatGPT subscriptions execute through the openai-codex adapter,
-  // but retain OpenAI's tokenizer and automatic prompt-cache behavior. Keep
-  // the execution-provider alias out of cache-family and cost classification.
-  return resolved === "openai-codex" ? "openai" : resolved;
-}
+// silently generic model. Family classification is shared with cache_scope
+// through modelFamilyProvider, the single source of truth for how
+// serving-provider aliases map to canonical model families.
 
 export function isAnthropicFamily(model: string, provider?: string): boolean {
-  return modelProvider(model, provider) === "anthropic";
+  return modelFamilyProvider(model, provider) === "anthropic";
 }
 
 export function isOpenAiFamily(model: string, provider?: string): boolean {
-  return modelProvider(model, provider) === "openai";
+  return modelFamilyProvider(model, provider) === "openai";
 }
 
 function isFireworksFamily(model: string, provider?: string): boolean {
-  return modelProvider(model, provider) === "fireworks";
+  return modelFamilyProvider(model, provider) === "fireworks";
 }
 
 function isMetaFamily(model: string, provider?: string): boolean {
-  return modelProvider(model, provider) === "meta";
+  return modelFamilyProvider(model, provider) === "meta";
 }
 
 export function promptCacheProviderForModel(
@@ -89,7 +84,7 @@ export function anthropicMinCacheTokens(model: string, provider?: string): numbe
 }
 
 export function tokenizerFamily(model: string, providerOverride?: string): string {
-  const provider = modelProvider(model, providerOverride);
+  const provider = modelFamilyProvider(model, providerOverride);
   if (provider === "fireworks") {
     const canonical = canonicalModelId(model).toLowerCase();
     const providerPrefixed = canonical.startsWith(`${provider}/`);

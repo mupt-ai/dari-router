@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { RouterCoreError } from "../src/errors.js";
-import { canonicalModelId, nativeModelId, providerForModel } from "../src/model_ids.js";
+import { canonicalModelId, modelFamilyProvider, nativeModelId, providerForModel } from "../src/model_ids.js";
 
 test("splits provider prefixes case-insensitively", () => {
   expect(providerForModel("openai/gpt-4.1-mini")).toBe("openai");
@@ -31,4 +31,23 @@ test("canonicalizes only the provider segment", () => {
     "fireworks/deepseek-ai/DeepSeek-V4-Pro",
   );
   expect(canonicalModelId("no-slash")).toBe("no-slash");
+});
+
+test("family provider follows serving aliases to the canonical owner", () => {
+  expect(modelFamilyProvider("openai/gpt-5.6-sol", "openai-codex")).toBe("openai");
+  expect(modelFamilyProvider("openai/gpt-5.6-sol", "amazon-bedrock")).toBe("openai");
+  expect(modelFamilyProvider("anthropic/claude-sonnet-5", "amazon-bedrock")).toBe(
+    "anthropic",
+  );
+  // Unrecognized serving providers are themselves, and so are aliased providers
+  // whose canonical owner is not a known family.
+  expect(modelFamilyProvider("prox-bedrock/gpt-5.6-sol", "amazon-bedrock")).toBe(
+    "amazon-bedrock",
+  );
+  expect(modelFamilyProvider("openai/gpt-5.6-sol", "openrouter")).toBe("openrouter");
+  // Without an explicit provider the id's prefix decides, and unparseable ids
+  // are errors rather than silently generic models.
+  expect(modelFamilyProvider("anthropic/claude-sonnet-5")).toBe("anthropic");
+  expect(modelFamilyProvider("ANTHROPIC/claude-sonnet-5")).toBe("anthropic");
+  expect(() => modelFamilyProvider("claude-sonnet-5")).toThrow("Unsupported model provider");
 });

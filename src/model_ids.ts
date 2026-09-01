@@ -31,3 +31,28 @@ export function canonicalModelId(modelId: string): string {
   if (slash <= 0) return modelId;
   return modelId.slice(0, slash).toLowerCase() + modelId.slice(slash);
 }
+
+// Serving-provider adapters that execute a canonical model owner's models
+// retain the owner's tokenizer, prompt-cache, and cost family. Warm-prefix
+// provenance is checked separately against the actual serving provider, so
+// an alias here never lets one provider claim another's cached prefix.
+// Returns null when the serving provider is not an alias.
+function aliasFamilyProvider(model: string, provider: string): string | null {
+  if (provider === "openai-codex") return "openai";
+  if (provider !== "amazon-bedrock") return null;
+  const slash = canonicalModelId(model).indexOf("/");
+  if (slash <= 0) return null;
+  const owner = canonicalModelId(model).slice(0, slash).toLowerCase();
+  return owner === "openai" || owner === "anthropic" ? owner : null;
+}
+
+// The provider whose family behavior (tokenizer, prompt cache, cost class)
+// a model follows: the serving provider itself, or the canonical model owner
+// when serving through a provider alias. Callers that know the serving
+// provider pass it; otherwise the model id's prefix decides, and an id with
+// no parseable prefix is an error, not a silently generic model.
+export function modelFamilyProvider(model: string, provider?: string): string {
+  const resolved = (provider ?? providerForModel(model)).toLowerCase();
+  const aliased = aliasFamilyProvider(model, resolved);
+  return aliased ?? resolved;
+}

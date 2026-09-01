@@ -218,6 +218,38 @@ test("anthropic fixed-turn full cache hits do not also pay standard input", () =
   expect(turnCostUsdAt(sonnet.fixed_turn_cost_estimate, FIXED_TURN_COST_COMPARISON_TURNS)).toBeCloseTo(expected, 10);
 });
 
+test("Bedrock candidates retain their canonical cost families", () => {
+  const [openAi] = estimates({
+    candidates: ["openai/gpt-5.6-sol"],
+    hits: [],
+    reasoningEffort: "medium",
+    executionProvider: "amazon-bedrock",
+  });
+  const [anthropic] = estimates({
+    candidates: ["anthropic/claude-sonnet-4-6"],
+    hits: [],
+    reasoningEffort: "medium",
+    executionProvider: "amazon-bedrock",
+  });
+
+  expect(openAi).toMatchObject({
+    pricing_known: true,
+    output_cost_per_mtok: 20,
+    fixed_turn_cost_estimate: {
+      assumed_reasoning_effort: "medium",
+      output_tokens_per_turn: OUTPUT_TOKENS.medium,
+    },
+  });
+  expect(anthropic).toMatchObject({
+    pricing_known: true,
+    output_cost_per_mtok: 15,
+    fixed_turn_cost_estimate: {
+      assumed_reasoning_effort: "medium",
+      output_tokens_per_turn: OUTPUT_TOKENS.medium,
+    },
+  });
+});
+
 test("fixed-turn estimates use reasoning output buckets and include output cost", () => {
   const [low] = estimates({
     candidates: ["openai/gpt-5.2"],

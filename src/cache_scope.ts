@@ -1,4 +1,4 @@
-import { canonicalModelId } from "./model_ids.js";
+import { canonicalModelId, modelFamilyProvider } from "./model_ids.js";
 
 export type ReasoningCacheScope = "effort_keyed" | "shared";
 
@@ -36,12 +36,14 @@ export function reasoningCacheScope(
   provider?: string,
 ): ReasoningCacheScope {
   const canonical = canonicalModelId(modelId);
-  const normalizedProvider = (provider ?? canonical.split("/", 1)[0]).toLowerCase();
-  const legacyPrefix = `${normalizedProvider}/`;
-  const providerNeutral = normalizedProvider === "fireworks" && canonical.startsWith(legacyPrefix)
+  // Scope keys name the canonical family provider, so a serving alias reads
+  // the owner's row instead of defaulting to effort_keyed.
+  const familyProvider = modelFamilyProvider(canonical, provider).toLowerCase();
+  const legacyPrefix = `${familyProvider}/`;
+  const providerNeutral = familyProvider === "fireworks" && canonical.startsWith(legacyPrefix)
     ? canonical.slice(legacyPrefix.length)
     : canonical;
-  return DEFAULT_REASONING_CACHE_SCOPES[`${normalizedProvider}:${providerNeutral}`]
+  return DEFAULT_REASONING_CACHE_SCOPES[`${familyProvider}:${providerNeutral}`]
     ?? "effort_keyed";
 }
 

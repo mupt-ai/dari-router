@@ -9,7 +9,7 @@ import {
   providerMinCacheTokens,
 } from "../src/cache_behavior.js";
 
-test("classifies anthropic family for direct Anthropic only", () => {
+test("classifies model families from canonical owners and serving aliases", () => {
   expect(isAnthropicFamily("anthropic/claude-sonnet-4-6")).toBe(true);
   expect(isAnthropicFamily("fireworks/deepseek-ai/DeepSeek-V4-Pro")).toBe(false);
   expect(isAnthropicFamily("openai/gpt-5.2")).toBe(false);
@@ -26,11 +26,24 @@ test("classifies anthropic family for direct Anthropic only", () => {
   );
 });
 
-test("classifies the subscription adapter as OpenAI cache behavior", () => {
+test("classifies serving aliases by canonical model owner", () => {
   expect(isOpenAiFamily("openai/gpt-5.6-sol", "openai-codex")).toBe(true);
   expect(promptCacheProviderForModel("openai/gpt-5.6-sol", "openai-codex")).toBe(
     "openai",
   );
+  expect(isOpenAiFamily("openai/gpt-5.6-sol", "amazon-bedrock")).toBe(true);
+  expect(
+    promptCacheProviderForModel("openai/gpt-5.6-sol", "amazon-bedrock"),
+  ).toBe("openai");
+  expect(
+    isAnthropicFamily("anthropic/claude-sonnet-5", "amazon-bedrock"),
+  ).toBe(true);
+  expect(
+    promptCacheProviderForModel(
+      "anthropic/claude-sonnet-5",
+      "amazon-bedrock",
+    ),
+  ).toBe("anthropic");
 });
 
 test("tracks provider-specific cache token minimums", () => {
