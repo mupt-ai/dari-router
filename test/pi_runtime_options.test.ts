@@ -77,7 +77,7 @@ test("piOptions rejects options the fork hard-throws for, per API", async () => 
   expect(stopOptions).toMatchObject({ stop: ["END"], topP: 0.5 });
 });
 
-test("Bedrock nests OpenAI reasoning effort in additionalModelRequestFields", async () => {
+test("Bedrock reasoning is delegated to Pi options", async () => {
   const model = piModel({
     id: "global.openai.gpt-5.6-sol",
     provider: "amazon-bedrock",
@@ -87,28 +87,11 @@ test("Bedrock nests OpenAI reasoning effort in additionalModelRequestFields", as
 
   for (const level of ["off", "low", "medium", "high", "xhigh", "max"] as const) {
     const request = routerRequest({ reasoning: { effort: level } });
-    const execution = {
-      ...piExecution(request, model),
-      candidate: {
-        id: "openai/gpt-5.6-sol",
-        provider: model.provider,
-        api: model.api,
-      },
-      reasoningEffort: level,
-    };
+    const execution = { ...piExecution(request, model), reasoningEffort: level };
     const options = await piOptions({ apiKey: "test-key" }, execution, model);
-    const payload = await options.onPayload?.({
-      modelId: model.id,
-      additionalModelRequestFields: { existing: true },
-    }, model);
 
-    expect(payload).toEqual({
-      modelId: model.id,
-      additionalModelRequestFields: {
-        existing: true,
-        reasoning_effort: level === "off" ? "none" : level,
-      },
-    });
+    expect(options.reasoning).toBe(level === "off" ? undefined : level);
+    expect(options.onPayload).toBeUndefined();
   }
 });
 

@@ -152,8 +152,6 @@ function payloadPatch(
   );
   const imageDetailPatch = imageDetails.size > 0 &&
     (isOpenAIResponsesApi(model.api) || model.api === "openai-completions");
-  const bedrockOpenAIReasoningPatch = model.api === "bedrock-converse-stream" &&
-    execution.candidate.id.startsWith("openai/");
   if (
     imageDetails.size > 0 &&
     !imageDetailPatch &&
@@ -169,8 +167,7 @@ function payloadPatch(
     !strictTools &&
     parallel === undefined &&
     !thinkingPatch &&
-    !imageDetailPatch &&
-    !bedrockOpenAIReasoningPatch
+    !imageDetailPatch
   ) {
     return undefined;
   }
@@ -189,27 +186,7 @@ function payloadPatch(
     if (parallel !== undefined) payload = patchParallelTools(payload, parallel, model.api);
     if (imageDetailPatch) payload = patchImageDetails(payload, imageDetails);
     if (thinkingPatch) payload = patchAnthropicThinking(payload, request);
-    if (bedrockOpenAIReasoningPatch) {
-      payload = patchBedrockOpenAIReasoning(payload, execution.reasoningEffort);
-    }
     return payload;
-  };
-}
-
-function patchBedrockOpenAIReasoning(
-  payload: Record<string, unknown>,
-  effort: PiExecution["reasoningEffort"],
-): Record<string, unknown> {
-  // Converse carries provider-specific OpenAI fields inside
-  // additionalModelRequestFields, not at the request root.
-  return {
-    ...payload,
-    additionalModelRequestFields: {
-      ...(isRecord(payload.additionalModelRequestFields)
-        ? payload.additionalModelRequestFields
-        : {}),
-      reasoning_effort: effort === "off" ? "none" : effort,
-    },
   };
 }
 
