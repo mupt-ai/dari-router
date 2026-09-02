@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ChatCompletionRequest, ChatMessage } from "./types.js";
 
-const FP_VERSION = "v1";
+const FP_VERSION = "v2";
 
 /**
  * Conversation identity is an exact-prefix match over what providers actually
@@ -56,7 +56,37 @@ function isSystemRole(role: string): boolean {
 }
 
 export function conversationMessages(request: ChatCompletionRequest): ChatMessage[] {
-  return (request.messages ?? []).filter((message) => !isSystemRole(message.role));
+  const messages: ChatMessage[] = [];
+  let sawConversationMessage = false;
+  for (const message of request.messages ?? []) {
+    if (isSystemRole(message.role)) {
+      if (!sawConversationMessage) continue;
+      const previous = messages.at(-1);
+      if (previous?.role === "tool") {
+        previous.content = [...contentParts(previous.content), ...contentParts(message.content)];
+      } else {
+        appendConversationMessage(messages, { role: "user", content: message.content ?? null });
+      }
+      continue;
+    }
+    sawConversationMessage = true;
+    appendConversationMessage(messages, message);
+  }
+  return messages;
+}
+
+function appendConversationMessage(messages: ChatMessage[], message: ChatMessage): void {
+  const previous = messages.at(-1);
+  if (message.role === "user" && previous?.role === "user") {
+    previous.content = [...contentParts(previous.content), ...contentParts(message.content)];
+    return;
+  }
+  messages.push({ ...message });
+}
+
+function contentParts(content: ChatMessage["content"]): Array<Record<string, unknown>> {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return Array.isArray(content) ? content : [];
 }
 
 // Approximates how many Anthropic content blocks a message renders to: one
@@ -87,25 +117,26 @@ export function conversationBlockCount(request: ChatCompletionRequest): number {
 // Anchors and scopes the chain. routerId is a pure namespace so two routers
 // receiving identical conversations never share entries; system/tools changes
 // bust provider caches, so they bust ours too.
-// System/developer messages are folded in here regardless of their position in
-// the message list, so a request that moves one mid-conversation hashes the
-// same as system-first. Clients virtually always send system first; if they
-// don't, the warmth estimate is merely optimistic — estimates never bill.
+// Only the leading system/developer preamble enters the head. Provider
+// lowering keeps later system notes positional so per-turn reminders cannot
+// reseed the whole cache chain.
 // NUL is the component delimiter throughout: JSON.stringify always escapes
 // control characters, so canonical output can never contain a raw NUL and
 // component boundaries are unambiguous.
 export function headHash(routerId: string, request: ChatCompletionRequest): string {
-  const systemMessages = (request.messages ?? [])
-    .filter((message) => isSystemRole(message.role))
-    .map((message) => canonicalMessage(message));
+  const systemMessages: string[] = [];
+  for (const message of request.messages ?? []) {
+    if (!isSystemRole(message.role)) break;
+    systemMessages.push(canonicalMessage(message));
+  }
   return sha256(
     [FP_VERSION, routerId, `[${systemMessages.join(",")}]`, stableStringify(request.tools ?? [])].join("\u0000")
   );
 }
 
-// h[i] = sha256(h[i-1] ‖ canonical(message_i)) over non-system messages.
-// Returns [h1 ... hn]; chain[i] identifies the conversation prefix ending at
-// non-system message i+1. System messages live in the head hash only.
+// h[i] = sha256(h[i-1] ‖ canonical(message_i)) over provider-visible
+// conversation messages. Mid-conversation system notes remain positional;
+// only the leading preamble lives in the head hash.
 export function prefixChain(routerId: string, request: ChatCompletionRequest): string[] {
   let hash = headHash(routerId, request);
   const chain: string[] = [];

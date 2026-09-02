@@ -21,6 +21,7 @@ export function piContext(request: RouterRequest, model: PiModel): Context {
   const calls = new Map<string, string>();
   const timestamp = Date.now();
   let assistant: Extract<Context["messages"][number], { role: "assistant" }> | undefined;
+  let sawConversationItem = false;
 
   const flushAssistant = () => {
     if (assistant === undefined) return;
@@ -48,16 +49,26 @@ export function piContext(request: RouterRequest, model: PiModel): Context {
   for (const item of request.items) {
     if (item.type === "message" && (item.role === "system" || item.role === "developer")) {
       flushAssistant();
-      system.push(systemText(item.content));
+      const text = systemText(item.content);
+      if (!text) continue;
+      if (!sawConversationItem) {
+        // Leading preamble is identical on every request, so folding it into
+        // the system prompt keeps the provider payload prefix stable.
+        system.push(text);
+        continue;
+      }
+      // Mid-conversation system/developer notes arrive between turns (Claude
+      // Code appends a `<total_tokens>` reminder after every tool result).
+      // Folding them into the system prompt mutates the front of the provider
+      // payload, so prefix-matching prompt caches miss and re-write the whole
+      // conversation at cache-write prices. Keep them positional instead.
+      appendPositionalNote(messages, text, timestamp);
       continue;
     }
+    sawConversationItem = true;
     if (item.type === "message" && item.role === "user") {
       flushAssistant();
-      messages.push({
-        role: "user",
-        content: piContent(item.content, "user message"),
-        timestamp,
-      });
+      appendUserMessage(messages, piContent(item.content, "user message"), timestamp);
       continue;
     }
     if (item.type === "message") {
@@ -174,6 +185,38 @@ function thinkingContent(
     thinkingSignature: continuation.data,
     redacted: true,
   };
+}
+
+function appendPositionalNote(
+  messages: Context["messages"],
+  text: string,
+  timestamp: number,
+): void {
+  const previous = messages.at(-1);
+  if (previous?.role === "toolResult") {
+    previous.content = [...piContentBlocks(previous.content), { type: "text", text }];
+    return;
+  }
+  appendUserMessage(messages, [{ type: "text", text }], timestamp);
+}
+
+function appendUserMessage(
+  messages: Context["messages"],
+  content: Extract<Context["messages"][number], { role: "user" }>["content"],
+  timestamp: number,
+): void {
+  const previous = messages.at(-1);
+  if (previous?.role === "user") {
+    previous.content = [...piContentBlocks(previous.content), ...piContentBlocks(content)];
+    return;
+  }
+  messages.push({ role: "user", content, timestamp });
+}
+
+function piContentBlocks(
+  content: Extract<Context["messages"][number], { role: "user" | "toolResult" }>["content"],
+): Exclude<Extract<Context["messages"][number], { role: "user" }>["content"], string> {
+  return typeof content === "string" ? [{ type: "text", text: content }] : content;
 }
 
 function systemText(content: readonly RouterContent[]): string {

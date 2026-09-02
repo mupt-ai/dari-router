@@ -49,6 +49,28 @@ test("chain is deterministic and extends without changing earlier hashes", () =>
   expect(turn2[1]).toBe(entryHash);
 });
 
+test("mid-conversation system notes extend without reseeding the prefix", () => {
+  const first = prefixChain(ROUTER, request({
+    messages: [
+      { role: "system", content: "You are helpful." },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+    ],
+  }));
+  const replay = prefixChain(ROUTER, request({
+    messages: [
+      { role: "system", content: "You are helpful." },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+      { role: "system", content: "<total_tokens>1000 tokens left</total_tokens>" },
+      { role: "user", content: "next question" },
+    ],
+  }));
+
+  expect(replay.slice(0, first.length)).toEqual(first);
+  expect(replay).toHaveLength(first.length + 1);
+});
+
 test("head hash is sensitive to router, system prompt, and tools", () => {
   const base = headHash(ROUTER, request());
   expect(headHash("rtr_other", request())).not.toBe(base);

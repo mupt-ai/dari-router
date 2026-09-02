@@ -230,6 +230,65 @@ test("replayed tool calls with empty-string arguments become empty objects", asy
   });
 });
 
+test("keeps leading system notes in the system prompt and mid-conversation notes positional", () => {
+  const context = piContext(
+    routerRequest({
+      items: [
+        { type: "message", role: "system", content: [{ type: "text", text: "System prompt." }] },
+        { type: "message", role: "user", content: [{ type: "text", text: "look" }] },
+        { type: "message", role: "assistant", content: [{ type: "text", text: "done" }] },
+        {
+          type: "message",
+          role: "system",
+          content: [{ type: "text", text: "<total_tokens>1000 tokens left</total_tokens>" }],
+        },
+        { type: "message", role: "user", content: [{ type: "text", text: "again" }] },
+      ],
+    }),
+    OPENAI_MODEL,
+  );
+
+  expect(context.systemPrompt).toBe("System prompt.");
+  expect(context.messages).toMatchObject([
+    { role: "user", content: [{ type: "text", text: "look" }] },
+    { role: "assistant", content: [{ type: "text", text: "done" }] },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "<total_tokens>1000 tokens left</total_tokens>" },
+        { type: "text", text: "again" },
+      ],
+    },
+  ]);
+});
+
+test("appends a system note to a tool result without adding a consecutive user turn", () => {
+  const context = piContext(
+    routerRequest({
+      items: [
+        { type: "message", role: "user", content: [{ type: "text", text: "look" }] },
+        { type: "tool_call", id: "call_1", name: "lookup", arguments: {} },
+        { type: "tool_result", toolCallId: "call_1", content: [{ type: "text", text: "result" }] },
+        {
+          type: "message",
+          role: "system",
+          content: [{ type: "text", text: "<total_tokens>1000 tokens left</total_tokens>" }],
+        },
+      ],
+    }),
+    OPENAI_MODEL,
+  );
+
+  expect(context.messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+  expect(context.messages.at(-1)).toMatchObject({
+    role: "toolResult",
+    content: [
+      { type: "text", text: "result" },
+      { type: "text", text: "<total_tokens>1000 tokens left</total_tokens>" },
+    ],
+  });
+});
+
 test("hosted tool history fails closed on non-Responses APIs and forwards on Responses", () => {
   const payload = { type: "web_search_call", id: "ws_1", status: "completed" };
   const request = routerRequest({
