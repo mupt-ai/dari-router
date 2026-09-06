@@ -256,18 +256,24 @@ function prepareCandidatesWithAccounting(
     if (identityHit) {
       conversationId = identityHit.entry.conversation_id;
       identityMatchDepth = identityHit.depth > 0 ? identityHit.depth : null;
+      // Prefix matches measure shared history, not the latest routing state.
+      // A client can rewrite its tail and still match an older, expired lease.
+      // Only a trusted conversation id lets us use newer nonmatching rows.
+      const stateHit = input.conversationId === conversationId
+        ? newestConversationHit(input.prefixHits, conversationId) ?? identityHit
+        : identityHit;
       previousDecision ??= previousDecisionFromHit(
-        identityHit.entry,
+        stateHit.entry,
         compatible.candidates,
       );
-      activeLease = activeLeaseFromHit(identityHit.entry, compatible.candidates);
+      activeLease = activeLeaseFromHit(stateHit.entry, compatible.candidates);
       // The prefetch write lands on whatever rows existed when the policy
       // finished, and later turns append rows without it, so the pending
       // lease is recovered from any recent row of this conversation — but
       // only when the previous lease ran to completion. The final hold turn
       // writes a zero countdown; a fallback-served turn writes none, and its
       // broken commitment must not be resurrected by a stale prefetch.
-      if (identityHit.entry.lease_turns_remaining === 0) {
+      if (stateHit.entry.lease_turns_remaining === 0) {
         const matchConversationId = identityHit.entry.conversation_id;
         const conversationHits = (input.prefixHits ?? [])
           .filter((hit) => hit.conversation_id === matchConversationId)

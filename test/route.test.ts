@@ -226,6 +226,45 @@ test("a touched shallower row does not shadow the latest serving decision", () =
   }
 });
 
+test("a matching old prefix cannot override the trusted conversation's adopted lease", () => {
+  const base = routeInput().prefixHits![0]!;
+  const expired = { ...base, lease_turns_remaining: 0 };
+  const adopted = {
+    ...base,
+    hash: "rewritten-tail",
+    message_depth: 5,
+    next_model: SONNET,
+    lease_turns_remaining: 4,
+  };
+  const unrelated = {
+    ...adopted,
+    conversation_id: "another-conversation",
+    updated_at: "2026-07-21T00:00:01Z",
+    lease_turns_remaining: 20,
+  };
+  for (const prefixHits of [[expired, adopted, unrelated], [unrelated, adopted, expired]]) {
+    const prepared = prepareRoute(routeInput({ conversationId: "conv_1", prefixHits }));
+    expect(prepared.identityMatchDepth).toBe(1);
+    expect(prepared.previousDecision?.model).toBe(SONNET);
+    expect(prepared.activeLease).toEqual({
+      model: SONNET, reasoningEffort: "medium", turnsRemaining: 4,
+    });
+    expect(prepared.pendingLease).toBeUndefined();
+    // The same history without a trusted identity must not inherit a branch's lease.
+    expect(prepareRoute(routeInput({ prefixHits })).activeLease).toBeUndefined();
+    // Exhaustion or invalidation of the latest lease must not revive an old one.
+    for (const remaining of [0, undefined]) {
+      expect(prepareRoute(routeInput({
+        conversationId: "conv_1",
+        prefixHits: [
+          { ...expired, lease_turns_remaining: 8 },
+          { ...adopted, lease_turns_remaining: remaining },
+        ],
+      })).activeLease).toBeUndefined();
+    }
+  }
+});
+
 test("a prefetched lease is recovered from any recent conversation row", () => {
   const base = routeInput().prefixHits![0]!;
   // The prefetch landed on a shallower row; a later turn appended the deeper
