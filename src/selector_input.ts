@@ -23,6 +23,10 @@ import {
 import type { JsonValue } from "./json.js";
 
 const IMAGE_OMITTED_PLACEHOLDER = "<image omitted>";
+// Numbered placeholders name images that travel to the selector out of band
+// (the routing backend attaches them as ordered image parts), so scrubbing
+// must leave them alone while still dropping any real image bytes or URLs.
+const SELECTOR_IMAGE_PLACEHOLDER = /^<image \d+>$/;
 
 export type SelectorCandidate = {
   model: string;
@@ -96,12 +100,19 @@ export function selectorSafeMessages(messages: ChatMessage[]): ChatMessage[] {
     return {
       ...message,
       content: message.content.map((part) =>
-        isRecord(part) && part.type === "image_url"
+        isRecord(part) && part.type === "image_url" && !isSelectorImagePlaceholder(part)
           ? { type: "image_url", image_url: { url: IMAGE_OMITTED_PLACEHOLDER } }
           : part
       ),
     };
   });
+}
+
+function isSelectorImagePlaceholder(part: Record<string, unknown>): boolean {
+  const imageUrl = part["image_url"];
+  return isRecord(imageUrl)
+    && typeof imageUrl["url"] === "string"
+    && SELECTOR_IMAGE_PLACEHOLDER.test(imageUrl["url"]);
 }
 
 export function buildSelectorInput(args: {
