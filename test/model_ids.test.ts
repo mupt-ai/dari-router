@@ -39,11 +39,14 @@ test("family provider follows serving aliases to the canonical owner", () => {
   expect(modelFamilyProvider("anthropic/claude-sonnet-5", "amazon-bedrock")).toBe(
     "anthropic",
   );
+  expect(modelFamilyProvider("openai/gpt-5.6-sol", "azure")).toBe("openai");
+  expect(modelFamilyProvider("anthropic/claude-sonnet-5", "azure")).toBe("anthropic");
   // Unrecognized serving providers are themselves, and so are aliased providers
   // whose canonical owner is not a known family.
   expect(modelFamilyProvider("prox-bedrock/gpt-5.6-sol", "amazon-bedrock")).toBe(
     "amazon-bedrock",
   );
+  expect(modelFamilyProvider("prox-azure/gpt-5.6-sol", "azure")).toBe("azure");
   expect(modelFamilyProvider("openai/gpt-5.6-sol", "openrouter")).toBe("openrouter");
   // Without an explicit provider the id's prefix decides, and unparseable ids
   // are errors rather than silently generic models.

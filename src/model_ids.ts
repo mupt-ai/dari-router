@@ -39,7 +39,7 @@ export function canonicalModelId(modelId: string): string {
 // Returns null when the serving provider is not an alias.
 function aliasFamilyProvider(model: string, provider: string): string | null {
   if (provider === "openai-codex") return "openai";
-  if (provider !== "amazon-bedrock") return null;
+  if (provider !== "amazon-bedrock" && provider !== "azure") return null;
   const slash = canonicalModelId(model).indexOf("/");
   if (slash <= 0) return null;
   const owner = canonicalModelId(model).slice(0, slash).toLowerCase();
