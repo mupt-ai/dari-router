@@ -106,3 +106,21 @@ test("image bytes never reach the selector serialization", () => {
   expect(serialized).toContain("<image omitted>");
   expect(serialized).not.toContain("A".repeat(100));
 });
+
+test("numbered selector image placeholders survive scrubbing", () => {
+  const messages = selectorSafeMessages([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "transcribe this page" },
+        { type: "image_url", image_url: { url: "<image 1>", detail: "high" } },
+        { type: "image_url", image_url: { url: "https://example.com/page.png" } },
+      ],
+    },
+  ]);
+  expect(messages[0]?.content).toEqual([
+    { type: "text", text: "transcribe this page" },
+    { type: "image_url", image_url: { url: "<image 1>", detail: "high" } },
+    { type: "image_url", image_url: { url: "<image omitted>" } },
+  ]);
+});
