@@ -66,7 +66,7 @@ const ANONYMOUS_ACTION_PROMPT_CLOSING = [
   "Think in exactly three short steps, then stop:",
   "1. Phase: one sentence — what stage the task is at based on the latest turn (exploring, editing, testing, wrapping up), roughly how many turns remain, and how hard the next step looks.",
   "2. Evidence: one sentence — the one or two benchmarks most like this work, and which actions stand out on them.",
-  "3. Pick: name the cheapest action whose standing clears the difficulty, and the longest lease the remaining work justifies; go pricier or shorter only when the task demands it. Then end thinking immediately and answer.",
+  "3. Pick: name the cheapest action whose scores clear the difficulty, and the longest lease the remaining work justifies; go pricier or shorter only when the task demands it. Then end thinking immediately and answer.",
   "Do not walk through every action, restate the scorecards, or retell the conversation.",
   "Return only JSON matching the provided schema.",
 ];

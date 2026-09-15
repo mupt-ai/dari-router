@@ -1,10 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { JsonObject } from "../src/json.js";
-import {
-  ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
-  ANONYMOUS_ACTION_SYSTEM_PROMPT,
-} from "../src/prompts.js";
+import { ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT } from "../src/prompts.js";
 import {
   assignAnonymousActions,
   assignStableAnonymousActions,
@@ -159,7 +156,7 @@ test("deterministically anonymizes every candidate-bearing selector field", () =
   const anonymous = anonymizeSelectorInput(selectorInput(), slots);
   const prompt = buildAnonymousPolicyPrompt(anonymous, slots);
   const [systemMessage, userMessage] = prompt.messages;
-  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_SYSTEM_PROMPT });
+  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT });
   expect(prompt.actions).toEqual(["A", "B", "C"]);
 
   const serialized = userMessage.content;
@@ -184,10 +181,10 @@ test("deterministically anonymizes every candidate-bearing selector field", () =
   expect(serialized).toContain("Fix the failing test.");
 });
 
-test("renders each action as a block of benchmark standing and one projected cost", () => {
+test("renders each action as a block of benchmark standing and one projected cost when asked", () => {
   const slots = assignAnonymousActions(CANDIDATES, rng(42));
   const anonymous = anonymizeSelectorInput(selectorInput(), slots);
-  const prompt = buildAnonymousPolicyPrompt(anonymous, slots);
+  const prompt = buildAnonymousPolicyPrompt(anonymous, slots, "standing");
   const serialized = prompt.messages[1].content;
 
   expect(serialized).toContain("<benchmarks>\n- SWE-bench: Coding reliability\n</benchmarks>");
@@ -207,7 +204,7 @@ test("renders each action as a block of benchmark standing and one projected cos
   expect(serialized).toContain(`<previous_action>\n${actionFor(slots, MEDIUM)}\n</previous_action>`);
 });
 
-test("renders raw benchmark scores on the benchmark's own scale when asked", () => {
+test("renders raw benchmark scores on the benchmark's own scale by default", () => {
   const slots = assignAnonymousActions(CANDIDATES, rng(42));
   const input = selectorInput();
   const card = (input["imported_evals"] as JsonObject[])[0]!;
@@ -218,7 +215,7 @@ test("renders raw benchmark scores on the benchmark's own scale when asked", () 
   scores[1]!["score"] = 1450;
   scores[2]!["score"] = 1320.125;
   const anonymous = anonymizeSelectorInput(input, slots);
-  const prompt = buildAnonymousPolicyPrompt(anonymous, slots, "raw");
+  const prompt = buildAnonymousPolicyPrompt(anonymous, slots);
   const [systemMessage, userMessage] = prompt.messages;
   const serialized = userMessage.content;
 
@@ -243,8 +240,7 @@ test("renders raw benchmark scores on the benchmark's own scale when asked", () 
   expect(serialized).not.toContain(STRONG);
   expect(serialized).not.toContain(MEDIUM);
 
-  // The default stays the candidate-relative standing.
-  const standing = buildAnonymousPolicyPrompt(anonymous, slots).messages[1].content;
+  const standing = buildAnonymousPolicyPrompt(anonymous, slots, "standing").messages[1].content;
   expect(standing).toContain("- SWE-bench: Rank 1/3, Z +1.14");
   expect(standing).not.toContain("Score ");
   expect(standing).not.toContain("scale 0–3000");

@@ -212,34 +212,35 @@ export function anonymizeSelectorInput(
 export function buildAnonymousPolicyPrompt(
   anonymousSelectorInput: AnonymousSelectorInput,
   slots: readonly AnonymousActionSlot[],
-  evalScoreFormat: AnonymousEvalScoreFormat = "standing",
+  evalScoreFormat: AnonymousEvalScoreFormat = "raw",
 ): AnonymousPolicyPrompt {
+  const format = evalScoreFormat === "standing" ? "standing" : "raw";
   return {
     messages: [
       {
         role: "system",
         content:
-          evalScoreFormat === "raw"
-            ? ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT
-            : ANONYMOUS_ACTION_SYSTEM_PROMPT,
+          format === "standing"
+            ? ANONYMOUS_ACTION_SYSTEM_PROMPT
+            : ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
       },
-      { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput, evalScoreFormat) },
+      { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput, format) },
     ],
     actions: slots.map((slot) => slot.action),
   };
 }
 
 // Renders the anonymous selector input as sectioned text rather than raw JSON.
-// One block per action carries that action's benchmark standing and its
+// One block per action carries that action's benchmark evidence and its
 // projected cost, so the policy compares like against like instead of
 // re-deriving comparisons from scores on incomparable scales and six cost
-// fields. How to read those blocks lives in ANONYMOUS_ACTION_SYSTEM_PROMPT,
+// fields. How to read those blocks lives in the score system prompt,
 // keeping this message pure data. The conversation goes last: it is the only
 // section that grows turn over turn, so keeping it at the end preserves the
 // shared prefix.
 export function formatAnonymousPolicyInput(
   input: AnonymousSelectorInput,
-  evalScoreFormat: AnonymousEvalScoreFormat = "standing",
+  evalScoreFormat: AnonymousEvalScoreFormat = "raw",
 ): string {
   assertValidBenchmarkStandings(input.imported_evals);
   const sections = [
@@ -308,9 +309,9 @@ function candidateBlock(
     const score = card.scores.find((entry) => entry.action === action);
     if (score !== undefined) {
       lines.push(
-        evalScoreFormat === "raw"
-          ? `- ${card.name}: Score ${rawScore(score.score)}`
-          : `- ${card.name}: Rank ${score.rank}/${score.rank_total}, Z ${signed(score.z_score)}`,
+        evalScoreFormat === "standing"
+          ? `- ${card.name}: Rank ${score.rank}/${score.rank_total}, Z ${signed(score.z_score)}`
+          : `- ${card.name}: Score ${rawScore(score.score)}`,
       );
     }
   }
@@ -342,9 +343,9 @@ function usd(value: number): string {
 }
 
 function glossaryLine(card: AnonymousEvalCard, evalScoreFormat: AnonymousEvalScoreFormat): string {
-  const scale = evalScoreFormat === "raw"
-    ? ` (scale ${rawScore(card.min_score)}–${rawScore(card.max_score)}, higher is better)`
-    : "";
+  const scale = evalScoreFormat === "standing"
+    ? ""
+    : ` (scale ${rawScore(card.min_score)}–${rawScore(card.max_score)}, higher is better)`;
   return card.description === null
     ? `- ${card.name}${scale}`
     : `- ${card.name}${scale}: ${card.description}`;
