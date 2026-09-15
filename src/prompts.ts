@@ -47,12 +47,13 @@ The runtime chooses provider fallbacks separately; return only the primary decis
 // System prompt for the anonymous candidate-action protocol (see
 // anonymous_actions.ts). It carries every invariant instruction, including how
 // to read the per-action blocks, so the user message stays pure data.
-export const ANONYMOUS_ACTION_SYSTEM_PROMPT = [
+const ANONYMOUS_ACTION_PROMPT_OPENING = [
   "You are Dari's model router for a coding agent.",
   "Choose exactly one anonymous candidate action for the agent's next turns, and how many turns to commit to it.",
   "Your choice is a lease: the chosen action serves that many consecutive turns before you are consulted again. A longer lease amortizes the cold start paid on its first turn across warm cache hits on the turns that follow; the lease ends early only if the task finishes or the provider fails.",
-  "Each action's block lists its benchmark standing and its projected cost at each lease length you may choose.",
-  "Rank is the action's position among the scored candidate actions on that benchmark, 1 being best. Z is how many standard deviations that action sits above or below the mean of those scored candidate actions.",
+];
+
+const ANONYMOUS_ACTION_PROMPT_CLOSING = [
   "Cost is the projected spend for the whole agent loop over exactly the turns of each lease option, from current cache warmth. Compare actions at the lease you intend to pick.",
   "A missing benchmark score means that action was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.",
   "The task section is the original user task. If it contains an explicit routing truncation marker, the middle was compacted to fit the policy window while preserving both ends. Lease history summarizes what earlier anonymous actions actually did; use completed turns, errors, tool results, and tests as evidence about whether the current phase needs a different action or lease length.",
@@ -68,4 +69,21 @@ export const ANONYMOUS_ACTION_SYSTEM_PROMPT = [
   "3. Pick: name the cheapest action whose standing clears the difficulty, and the longest lease the remaining work justifies; go pricier or shorter only when the task demands it. Then end thinking immediately and answer.",
   "Do not walk through every action, restate the scorecards, or retell the conversation.",
   "Return only JSON matching the provided schema.",
+];
+
+export const ANONYMOUS_ACTION_SYSTEM_PROMPT = [
+  ...ANONYMOUS_ACTION_PROMPT_OPENING,
+  "Each action's block lists its benchmark standing and its projected cost at each lease length you may choose.",
+  "Rank is the action's position among the scored candidate actions on that benchmark, 1 being best. Z is how many standard deviations that action sits above or below the mean of those scored candidate actions.",
+  ...ANONYMOUS_ACTION_PROMPT_CLOSING,
+].join("\n");
+
+// Same protocol, but each action's benchmark line is the raw leaderboard value
+// instead of its rank and z-score within the candidate group. The benchmarks
+// glossary carries each benchmark's scale so the values stay comparable.
+export const ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT = [
+  ...ANONYMOUS_ACTION_PROMPT_OPENING,
+  "Each action's block lists its raw benchmark scores and its projected cost at each lease length you may choose.",
+  "Score is the action's value on that benchmark's own scale; higher is better. The benchmarks section gives each benchmark's bounds and describes what its score is (an accuracy or pass rate, a comparative Elo rating, a composite index, or otherwise), so read a score against that. Scores are only comparable between actions on the same benchmark, never across benchmarks.",
+  ...ANONYMOUS_ACTION_PROMPT_CLOSING,
 ].join("\n");

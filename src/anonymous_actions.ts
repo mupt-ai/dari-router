@@ -6,7 +6,10 @@
 // named-candidate protocol in selector_input.ts/prompts.ts remains available
 // for custom routers that use a general-purpose LLM selector.
 
-import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "./prompts.js";
+import {
+  ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
+  ANONYMOUS_ACTION_SYSTEM_PROMPT,
+} from "./prompts.js";
 import {
   jsonRecord,
   jsonValue,
@@ -57,13 +60,25 @@ export type AnonymousEvalScore = {
   rank: number;
   rank_total: number;
   z_score: number;
+  score: number;
 };
 
 export type AnonymousEvalCard = {
   name: string;
   description: string | null;
+  min_score: number;
+  max_score: number;
   scores: AnonymousEvalScore[];
 };
+
+export type AnonymousEvalScoreFormat = "standing" | "raw";
+
+export const ANONYMOUS_EVAL_SCORE_FORMATS: readonly AnonymousEvalScoreFormat[] = ["standing", "raw"];
+
+export function parseAnonymousEvalScoreFormat(value: unknown, label: string): AnonymousEvalScoreFormat {
+  if (value === "standing" || value === "raw") return value;
+  throw new Error(`${label} must be one of ${ANONYMOUS_EVAL_SCORE_FORMATS.join(", ")}`);
+}
 
 export type AnonymousActionCost = {
   action: string;
@@ -197,11 +212,18 @@ export function anonymizeSelectorInput(
 export function buildAnonymousPolicyPrompt(
   anonymousSelectorInput: AnonymousSelectorInput,
   slots: readonly AnonymousActionSlot[],
+  evalScoreFormat: AnonymousEvalScoreFormat = "standing",
 ): AnonymousPolicyPrompt {
   return {
     messages: [
-      { role: "system", content: ANONYMOUS_ACTION_SYSTEM_PROMPT },
-      { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput) },
+      {
+        role: "system",
+        content:
+          evalScoreFormat === "raw"
+            ? ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT
+            : ANONYMOUS_ACTION_SYSTEM_PROMPT,
+      },
+      { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput, evalScoreFormat) },
     ],
     actions: slots.map((slot) => slot.action),
   };
@@ -215,16 +237,22 @@ export function buildAnonymousPolicyPrompt(
 // keeping this message pure data. The conversation goes last: it is the only
 // section that grows turn over turn, so keeping it at the end preserves the
 // shared prefix.
-export function formatAnonymousPolicyInput(input: AnonymousSelectorInput): string {
+export function formatAnonymousPolicyInput(
+  input: AnonymousSelectorInput,
+  evalScoreFormat: AnonymousEvalScoreFormat = "standing",
+): string {
   assertValidBenchmarkStandings(input.imported_evals);
   const sections = [
     ...(input.imported_evals.length > 0
-      ? [section("benchmarks", input.imported_evals.map(glossaryLine).join("\n"))]
+      ? [section(
+          "benchmarks",
+          input.imported_evals.map((card) => glossaryLine(card, evalScoreFormat)).join("\n"),
+        )]
       : []),
     section(
       "candidates",
       input.candidate_actions
-        .map((candidate) => candidateBlock(candidate.action, input))
+        .map((candidate) => candidateBlock(candidate.action, input, evalScoreFormat))
         .join("\n\n"),
     ),
     ...(input.previous_action === null
@@ -268,7 +296,11 @@ function section(name: string, body: string): string {
   return `<${name}>\n${body}\n</${name}>`;
 }
 
-function candidateBlock(action: string, input: AnonymousSelectorInput): string {
+function candidateBlock(
+  action: string,
+  input: AnonymousSelectorInput,
+  evalScoreFormat: AnonymousEvalScoreFormat,
+): string {
   const cost = input.cost_estimates.find((entry) => entry.action === action);
   const lines = [`## Action ${action}`];
   if (cost !== undefined) lines.push(costLine(cost));
@@ -276,11 +308,18 @@ function candidateBlock(action: string, input: AnonymousSelectorInput): string {
     const score = card.scores.find((entry) => entry.action === action);
     if (score !== undefined) {
       lines.push(
-        `- ${card.name}: Rank ${score.rank}/${score.rank_total}, Z ${signed(score.z_score)}`,
+        evalScoreFormat === "raw"
+          ? `- ${card.name}: Score ${rawScore(score.score)}`
+          : `- ${card.name}: Rank ${score.rank}/${score.rank_total}, Z ${signed(score.z_score)}`,
       );
     }
   }
   return lines.join("\n");
+}
+
+function rawScore(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(2).replace(/\.?0+$/, "");
 }
 
 // One line, one unit, the same horizons for every action.
@@ -302,8 +341,13 @@ function usd(value: number): string {
   return `$${trimmed}`;
 }
 
-function glossaryLine(card: AnonymousEvalCard): string {
-  return card.description === null ? `- ${card.name}` : `- ${card.name}: ${card.description}`;
+function glossaryLine(card: AnonymousEvalCard, evalScoreFormat: AnonymousEvalScoreFormat): string {
+  const scale = evalScoreFormat === "raw"
+    ? ` (scale ${rawScore(card.min_score)}–${rawScore(card.max_score)}, higher is better)`
+    : "";
+  return card.description === null
+    ? `- ${card.name}${scale}`
+    : `- ${card.name}${scale}: ${card.description}`;
 }
 
 function assertValidBenchmarkStandings(cards: readonly AnonymousEvalCard[]): void {
@@ -445,12 +489,20 @@ function anonymizeEvals(
       throw new Error(`selector eval[${evalIndex}].scores must be an array`);
     }
     const resolvedCount = scores.length;
+    const cardLabel = `selector eval[${evalIndex}]`;
+    const minScore = requiredNumber(card["min_score"], `${cardLabel}.min_score`);
+    const maxScore = requiredNumber(card["max_score"], `${cardLabel}.max_score`);
+    if (minScore >= maxScore) throw new Error(`${cardLabel} score range is invalid`);
     const anonymousScores = scores.map((entryScore, scoreIndex) => {
-      const label = `selector eval[${evalIndex}].scores[${scoreIndex}]`;
+      const label = `${cardLabel}.scores[${scoreIndex}]`;
       const score = jsonRecord(entryScore, label);
       const rank = requiredNumber(score["rank"], `${label}.rank`);
       const rankTotal = requiredNumber(score["rank_total"], `${label}.rank_total`);
       assertValidBenchmarkStanding(rank, rankTotal, resolvedCount, label);
+      const rawScore = requiredNumber(score["score"], `${label}.score`);
+      if (rawScore < minScore || rawScore > maxScore) {
+        throw new Error(`${label}.score must be between ${minScore} and ${maxScore}`);
+      }
       return {
         action: actionForCandidate(
           byCandidate,
@@ -460,11 +512,14 @@ function anonymizeEvals(
         rank,
         rank_total: rankTotal,
         z_score: requiredNumber(score["z_score"], `${label}.z_score`),
+        score: rawScore,
       };
     });
     return {
-      name: requiredString(card["name"], `selector eval[${evalIndex}].name`),
+      name: requiredString(card["name"], `${cardLabel}.name`),
       description: typeof card["description"] === "string" ? card["description"] : null,
+      min_score: minScore,
+      max_score: maxScore,
       // Explicit allowlist: notes and any future field can name the model.
       scores: anonymousScores,
     };

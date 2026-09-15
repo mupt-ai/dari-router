@@ -1,13 +1,17 @@
 import { expect, test } from "bun:test";
 
 import type { JsonObject } from "../src/json.js";
-import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "../src/prompts.js";
+import {
+  ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
+  ANONYMOUS_ACTION_SYSTEM_PROMPT,
+} from "../src/prompts.js";
 import {
   assignAnonymousActions,
   assignStableAnonymousActions,
   anonymizeSelectorInput,
   buildAnonymousPolicyPrompt,
   parseAnonymousActionSelection,
+  parseAnonymousEvalScoreFormat,
   type Rng,
 } from "../src/anonymous_actions.js";
 
@@ -201,6 +205,77 @@ test("renders each action as a block of benchmark standing and one projected cos
     "- SWE-bench: Rank 2/3, Z +0.16",
   ]);
   expect(serialized).toContain(`<previous_action>\n${actionFor(slots, MEDIUM)}\n</previous_action>`);
+});
+
+test("renders raw benchmark scores on the benchmark's own scale when asked", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const input = selectorInput();
+  const card = (input["imported_evals"] as JsonObject[])[0]!;
+  card["min_score"] = 0;
+  card["max_score"] = 3000;
+  const scores = card["scores"] as JsonObject[];
+  scores[0]!["score"] = 1210.5;
+  scores[1]!["score"] = 1450;
+  scores[2]!["score"] = 1320.125;
+  const anonymous = anonymizeSelectorInput(input, slots);
+  const prompt = buildAnonymousPolicyPrompt(anonymous, slots, "raw");
+  const [systemMessage, userMessage] = prompt.messages;
+  const serialized = userMessage.content;
+
+  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT });
+  expect(serialized).toContain(
+    "<benchmarks>\n- SWE-bench (scale 0–3000, higher is better): Coding reliability\n</benchmarks>",
+  );
+  expect(block(serialized, actionFor(slots, CHEAP))).toEqual([
+    "- Cost: 1 turn $0.006, 10 turns $0.0432, 100 turns $0.55",
+    "- SWE-bench: Score 1210.5",
+  ]);
+  expect(block(serialized, actionFor(slots, STRONG))).toEqual([
+    "- Cost: 1 turn $0.02, 10 turns $0.191, 100 turns $2.40",
+    "- SWE-bench: Score 1450",
+  ]);
+  expect(block(serialized, actionFor(slots, MEDIUM))).toEqual([
+    "- SWE-bench: Score 1320.13",
+  ]);
+  expect(serialized).not.toContain("Rank ");
+  expect(serialized).not.toContain(", Z ");
+  expect(serialized).not.toContain(CHEAP);
+  expect(serialized).not.toContain(STRONG);
+  expect(serialized).not.toContain(MEDIUM);
+
+  // The default stays the candidate-relative standing.
+  const standing = buildAnonymousPolicyPrompt(anonymous, slots).messages[1].content;
+  expect(standing).toContain("- SWE-bench: Rank 1/3, Z +1.14");
+  expect(standing).not.toContain("Score ");
+  expect(standing).not.toContain("scale 0–3000");
+});
+
+test("anonymized eval cards keep the raw score and scale without model identity", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const anonymous = anonymizeSelectorInput(selectorInput(), slots);
+  const card = anonymous.imported_evals[0]!;
+  expect(card.min_score).toBe(0);
+  expect(card.max_score).toBe(100);
+  expect(card.scores.map((score) => score.score).sort((a, b) => a - b)).toEqual([40, 70, 90]);
+  expect(Object.keys(card.scores[0]!).sort()).toEqual(["action", "rank", "rank_total", "score", "z_score"]);
+
+  const noScoreValue = selectorInput();
+  delete ((noScoreValue["imported_evals"] as JsonObject[])[0]!["scores"] as JsonObject[])[0]!["score"];
+  expect(() => anonymizeSelectorInput(noScoreValue, slots)).toThrow("scores[0].score must be a finite number");
+
+  const outOfRange = selectorInput();
+  ((outOfRange["imported_evals"] as JsonObject[])[0]!["scores"] as JsonObject[])[0]!["score"] = 101;
+  expect(() => anonymizeSelectorInput(outOfRange, slots)).toThrow("score must be between 0 and 100");
+
+  const badRange = selectorInput();
+  (badRange["imported_evals"] as JsonObject[])[0]!["max_score"] = 0;
+  expect(() => anonymizeSelectorInput(badRange, slots)).toThrow("score range is invalid");
+});
+
+test("parses eval score formats", () => {
+  expect(parseAnonymousEvalScoreFormat("standing", "format")).toBe("standing");
+  expect(parseAnonymousEvalScoreFormat("raw", "format")).toBe("raw");
+  expect(() => parseAnonymousEvalScoreFormat("z", "format")).toThrow("format must be one of standing, raw");
 });
 
 test("omits benchmark sections and cost details it has no data for", () => {
