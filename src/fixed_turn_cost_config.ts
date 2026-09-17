@@ -21,4 +21,7 @@ export const FIXED_TURN_CACHE_HIT_PROBABILITY = {
   // 48/50 follow-up requests hit in the July 2026 25-agent Pi benchmark.
   // First turns are excluded because fixed-turn turn one uses live warmth.
   meta: 0.96,
+  // Provisional: 9/10 large-prefix follow-ups reused the user prefix in the
+  // September 16, 2026 native Grok 4.6 probe (low effort, short intervals).
+  xai: 0.90,
 } as const;

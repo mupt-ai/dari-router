@@ -3,8 +3,6 @@ import {
   ANTHROPIC_LOOKBACK_BLOCKS,
   CROSS_TOKENIZER_RATIO,
   isAnthropicFamily,
-  isOpenAiFamily,
-  openAiCachedPrefixTokens,
   prefixHitMatchesProvider,
   promptCacheProviderForModel,
   providerCacheableTokens,
@@ -206,7 +204,6 @@ export function estimateCandidateCosts(args: {
     const price = args.pricing(model);
     const provider = args.modelProvider?.(model);
     const anthropicStyle = isAnthropicFamily(model, provider);
-    const openAiStyle = isOpenAiFamily(model, provider);
     const promptEstimate = args.promptEstimatesByCandidate.get(
       routingCandidateKey(candidate),
     );
@@ -245,9 +242,9 @@ export function estimateCandidateCosts(args: {
     }
 
     const selectedHit = selectPrefixHit(args.hits, model, reasoningEffort, cacheScope);
-    const knownCacheProvider = promptCacheProviderForModel(model, provider) !== null;
+    const cacheProvider = promptCacheProviderForModel(model, provider);
     const hit = selectedHit
-      && (provider === undefined || knownCacheProvider)
+      && (provider === undefined || cacheProvider !== null)
       && prefixHitMatchesProvider(selectedHit.entry, provider)
       ? selectedHit
       : undefined;
@@ -271,9 +268,9 @@ export function estimateCandidateCosts(args: {
       const meetsMinimum =
         hit.entry.prompt_tokens >= providerMinCacheTokens(model, provider);
       if (fingerprintsMatch && withinLookback && meetsMinimum) {
-        warmTokens = openAiStyle
-          ? openAiCachedPrefixTokens(hit.entry.prompt_tokens)
-          : hit.entry.prompt_tokens;
+        warmTokens = cacheProvider === null
+          ? hit.entry.prompt_tokens
+          : providerCacheableTokens(model, cacheProvider, hit.entry.prompt_tokens);
       }
     }
     // Anchored estimates contain only a fresh suffix; complete-prompt
@@ -348,7 +345,7 @@ function fixedTurnCostEstimate(args: {
   outputTokens?: number;
 }): FixedTurnCostEstimate | null {
   const provider = promptCacheProviderForModel(args.model, args.provider);
-  if (!provider || args.outputTokens === undefined) return null;
+  if (args.outputTokens === undefined) return null;
 
   // One pass to the longest horizon, snapshotting the running total at each
   // shorter one: turn N's cost depends on every turn before it, so the
@@ -363,27 +360,32 @@ function fixedTurnCostEstimate(args: {
 
   for (let turn = 1; turn <= longestHorizon; turn += 1) {
     const inputTokens = args.estPromptTokens + (turn - 1) * outputTokens;
+    // Cache modeling refines a projection; it must not gate its existence.
+    // Without a known cache policy, assume no reads or writes and charge
+    // ordinary input/output rates rather than inventing a hit probability.
     totalCost +=
-      turn === 1
-        ? deterministicTurnCost({
-            model: args.model,
-            price: args.price,
-            inputTokens,
-            cachedTokens: args.warmTokens,
-            outputTokens,
-            provider,
-          })
-        : laterTurnCost({
-            model: args.model,
-            price: args.price,
-            provider,
-            inputTokens,
-            // Later requests can only read prefixes that appeared in prior
-            // request inputs. The immediately previous output is fresh on the
-            // next request.
-            reusablePrefix: args.estPromptTokens + (turn - 2) * outputTokens,
-            outputTokens,
-          });
+      provider === null
+        ? (inputTokens * args.price.input + outputTokens * args.price.output) / MTOK
+        : turn === 1
+          ? deterministicTurnCost({
+              model: args.model,
+              price: args.price,
+              inputTokens,
+              cachedTokens: args.warmTokens,
+              outputTokens,
+              provider,
+            })
+          : laterTurnCost({
+              model: args.model,
+              price: args.price,
+              provider,
+              inputTokens,
+              // Later requests can only read prefixes that appeared in prior
+              // request inputs. The immediately previous output is fresh on the
+              // next request.
+              reusablePrefix: args.estPromptTokens + (turn - 2) * outputTokens,
+              outputTokens,
+            });
     if (horizons.includes(turn)) {
       projections.push({ projected_turns: turn, total_cost_usd: totalCost });
     }

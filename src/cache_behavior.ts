@@ -16,7 +16,7 @@ export const CROSS_TOKENIZER_RATIO = 1.1;
 const OPENAI_MIN_CACHE_TOKENS = 1024;
 const OPENAI_CACHE_INCREMENT_TOKENS = 128;
 
-export type PromptCacheProvider = "openai" | "anthropic" | "fireworks" | "meta";
+export type PromptCacheProvider = "openai" | "anthropic" | "fireworks" | "meta" | "xai";
 export type ModelProviderLookup = (model: string) => string;
 
 // Callers that know the serving provider pass it; otherwise the model id's
@@ -49,6 +49,7 @@ export function promptCacheProviderForModel(
   if (isAnthropicFamily(model, provider)) return "anthropic";
   if (isFireworksFamily(model, provider)) return "fireworks";
   if (isMetaFamily(model, provider)) return "meta";
+  if (modelFamilyProvider(model, provider) === "xai") return "xai";
   return null;
 }
 
@@ -126,7 +127,14 @@ export function prefixHitMatchesProvider(
   return prefixProviderMatches(hit.model, current);
 }
 
+// Provisional native xAI model: the live probe observed a 640-token cached
+// prefix on a 705-token prompt, with reads in 128-token increments. These
+// are conservative modeling assumptions, not documented provider guarantees.
+const XAI_MIN_CACHE_TOKENS = 640;
+const XAI_CACHE_INCREMENT_TOKENS = 128;
+
 export function providerMinCacheTokens(model: string, provider?: string): number {
+  if (modelFamilyProvider(model, provider) === "xai") return XAI_MIN_CACHE_TOKENS;
   if (isAnthropicFamily(model, provider)) return anthropicMinCacheTokens(model, provider);
   if (isFireworksFamily(model, provider) || isMetaFamily(model, provider)) return 0;
   return OPENAI_MIN_CACHE_TOKENS;
@@ -154,6 +162,11 @@ export function providerCacheableTokens(
 ): number {
   if (prefixTokens <= 0) return 0;
   if (provider === "openai") return openAiCachedPrefixTokens(prefixTokens);
+  if (provider === "xai") {
+    return prefixTokens < XAI_MIN_CACHE_TOKENS
+      ? 0
+      : Math.floor(prefixTokens / XAI_CACHE_INCREMENT_TOKENS) * XAI_CACHE_INCREMENT_TOKENS;
+  }
   if (provider === "anthropic") {
     return prefixTokens >= anthropicMinCacheTokens(model, provider) ? Math.floor(prefixTokens) : 0;
   }
