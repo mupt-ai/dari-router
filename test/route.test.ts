@@ -97,6 +97,43 @@ function routeInput(overrides: Partial<RouteInput> = {}): RouteInput {
   };
 }
 
+test("standard context limits exclude expensive candidates and their leases", () => {
+  const prepared = prepareRoute(routeInput({
+    promptTokenLimitFor: (model) => model === MINI ? 1 : null,
+    previousDecision: { model: MINI, reasoningEffort: "medium", reason: "previous" },
+  }));
+  expect(prepared.candidateResolution.candidates.map((candidate) => candidate.model)).toEqual([SONNET]);
+  expect(prepared.previousDecision).toBeUndefined();
+  expect(prepared.costEstimates.map((estimate) => estimate.model)).toEqual([SONNET]);
+});
+
+test("standard context limits reject a request when no candidates fit", () => {
+  expect(() => prepareRoute(routeInput({ promptTokenLimitFor: () => 1 }))).toThrow("standard-price context range");
+});
+
+test("standard context limits include the exact threshold", () => {
+  const baseline = prepareRoute(routeInput());
+  const limits = new Map(baseline.costEstimates.map((estimate) => [estimate.model, estimate.est_prompt_tokens]));
+  const prepared = prepareRoute(routeInput({ promptTokenLimitFor: (model) => limits.get(model)! }));
+  expect(prepared.candidateResolution.candidates).toEqual(baseline.candidateResolution.candidates);
+});
+
+test("context limits fail closed when prompt accounting fails", () => {
+  expect(() => prepareRoute(routeInput({
+    pricing: () => { throw new Error("unavailable"); },
+    promptTokenLimitFor: () => 272_000,
+  }))).toThrow("standard-price context range");
+});
+
+test("physical limits preserve unpriced fallback for models without surcharge limits", () => {
+  const prepared = prepareRoute(routeInput({
+    pricing: () => { throw new Error("unavailable"); },
+    promptTokenLimitFor: () => 1_000_000,
+    requiresPromptEstimateFor: (model) => model === MINI,
+  }));
+  expect(prepared.candidateResolution.candidates.map((candidate) => candidate.model)).toEqual([SONNET]);
+});
+
 test("prepareRoute recovers conversation state and builds the selector request", () => {
   const prepared = prepareRoute(routeInput());
 

@@ -92,6 +92,8 @@ type CandidatePreparationSharedInput = {
   customConfig?: CustomRouterConfig | null;
   modelPrices?: Record<string, RouterModelPrice>;
   pricing: PricingLookup;
+  promptTokenLimitFor?: (model: string) => number | null;
+  requiresPromptEstimateFor?: (model: string) => boolean;
   averageOutputTokensByModel?: Readonly<
     Record<string, Partial<Record<ReasoningEffort, number>> | null>
   >;
@@ -325,6 +327,35 @@ function prepareCandidatesWithAccounting(
     });
   } catch (error) {
     warnings.push({ phase: "cost_estimation", error });
+  }
+
+  if (input.promptTokenLimitFor !== undefined) {
+    const estimates = new Map(costEstimates.map((estimate) => [
+      routingCandidateKey({ model: estimate.model, reasoningEffort: estimate.reasoning_effort }),
+      estimate.est_prompt_tokens,
+    ]));
+    compatible.candidates = compatible.candidates.filter((candidate) => {
+      const limit = input.promptTokenLimitFor!(candidate.model);
+      const tokens = estimates.get(routingCandidateKey(candidate));
+      return limit === null || (tokens === undefined
+        ? input.requiresPromptEstimateFor?.(candidate.model) === false
+        : tokens <= limit);
+    });
+    if (compatible.candidates.length === 0) {
+      throw new RouterCoreError(
+        "invalid_request",
+        "The prompt exceeds the standard-price context range of all compatible models. Shorten or compact the conversation.",
+        "context_length_exceeded",
+      );
+    }
+    previousDecision = compatiblePreviousDecision(previousDecision, compatible.candidates);
+    const keys = new Set(compatible.candidates.map(routingCandidateKey));
+    if (activeLease && !keys.has(routingCandidateKey(activeLease))) activeLease = undefined;
+    if (pendingLease && !keys.has(routingCandidateKey(pendingLease))) pendingLease = undefined;
+    costEstimates = costEstimates.filter((estimate) => keys.has(routingCandidateKey({
+      model: estimate.model,
+      reasoningEffort: estimate.reasoning_effort,
+    })));
   }
 
   const candidateResolution = resolveStrategyCandidates({
