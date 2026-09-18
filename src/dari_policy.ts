@@ -208,7 +208,8 @@ function validatedPricing<Metadata>(
     const price = pricing(candidate.id);
     if (
       price === null ||
-      Object.values(price).some((value) => !Number.isFinite(value) || value < 0)
+      [price.input, price.output, price.cacheRead, price.cacheWrite].some((value) => !Number.isFinite(value) || value < 0) ||
+      price.tiers?.some((tier) => Object.values(tier).some((value) => !Number.isFinite(value) || value < 0))
     ) {
       throw new RouterFrameworkError(
         "configuration",

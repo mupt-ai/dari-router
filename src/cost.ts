@@ -36,7 +36,26 @@ export type ModelPricing = {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  tiers?: Array<{
+    inputTokensAbove: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  }>;
 };
+
+export function pricingForPrompt(price: ModelPricing, inputTokens: number): ModelPricing {
+  let rates = price;
+  let threshold = -1;
+  for (const tier of price.tiers ?? []) {
+    if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > threshold) {
+      rates = tier;
+      threshold = tier.inputTokensAbove;
+    }
+  }
+  return rates;
+}
 
 // A model missing from the resolved catalog must surface as null (pricing
 // unknown), never as $0.
@@ -201,7 +220,7 @@ export function estimateCandidateCosts(args: {
     reasoningCacheScope(model, args.modelProvider?.(model)));
   return args.candidates.map((candidate) => {
     const { model, reasoningEffort } = candidate;
-    const price = args.pricing(model);
+    const basePrice = args.pricing(model);
     const provider = args.modelProvider?.(model);
     const anthropicStyle = isAnthropicFamily(model, provider);
     const promptEstimate = args.promptEstimatesByCandidate.get(
@@ -293,6 +312,7 @@ export function estimateCandidateCosts(args: {
     }
 
     let estCost: number | null = null;
+    const price = basePrice === null ? null : pricingForPrompt(basePrice, estPrompt);
     if (price) {
       const remainder = Math.max(0, estPrompt - warmTokens);
       estCost =
@@ -311,7 +331,7 @@ export function estimateCandidateCosts(args: {
       fixed_turn_cost_estimate: price
         ? fixedTurnCostEstimate({
             model,
-            price,
+            price: basePrice!,
             estPromptTokens: estPrompt,
             warmTokens,
             reasoningEffort,
@@ -360,16 +380,17 @@ function fixedTurnCostEstimate(args: {
 
   for (let turn = 1; turn <= longestHorizon; turn += 1) {
     const inputTokens = args.estPromptTokens + (turn - 1) * outputTokens;
+    const price = pricingForPrompt(args.price, inputTokens);
     // Cache modeling refines a projection; it must not gate its existence.
     // Without a known cache policy, assume no reads or writes and charge
     // ordinary input/output rates rather than inventing a hit probability.
     totalCost +=
       provider === null
-        ? (inputTokens * args.price.input + outputTokens * args.price.output) / MTOK
+        ? (inputTokens * price.input + outputTokens * price.output) / MTOK
         : turn === 1
           ? deterministicTurnCost({
               model: args.model,
-              price: args.price,
+              price,
               inputTokens,
               cachedTokens: args.warmTokens,
               outputTokens,
@@ -377,7 +398,7 @@ function fixedTurnCostEstimate(args: {
             })
           : laterTurnCost({
               model: args.model,
-              price: args.price,
+              price,
               provider,
               inputTokens,
               // Later requests can only read prefixes that appeared in prior

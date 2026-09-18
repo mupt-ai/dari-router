@@ -179,6 +179,13 @@ export type RouterModelPrice = {
   output: number;
   cached_input?: number | null;
   cache_write?: number | null;
+  tiers?: Array<{
+    input_tokens_above: number;
+    input: number;
+    output: number;
+    cached_input?: number | null;
+    cache_write?: number | null;
+  }>;
 };
 
 export type PrefixHit = {
