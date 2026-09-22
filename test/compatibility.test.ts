@@ -24,6 +24,24 @@ test("omitted reasoning exposes every enabled model/thinking-level pair", () => 
   ]);
 });
 
+test("reasoning configuration updates route only to models that support them", () => {
+  const compatible = resolveCompatibleCandidates({
+    requestedReasoningEffort: "high",
+    requiredCapabilities: ["reasoning_configuration_update"],
+    candidateModels: ["openai/gpt-5.6-sol", "openai/gpt-6-sol"],
+    metadataLookup: metadataLookup({
+      "openai/gpt-5.6-sol": metadata(["low", "high"]),
+      "openai/gpt-6-sol": metadata(["low", "high"], {
+        supportsReasoningConfigurationUpdate: true,
+      }),
+    }),
+  });
+
+  expect(compatible.candidates).toEqual([
+    { model: "openai/gpt-6-sol", reasoningEffort: "high" },
+  ]);
+});
+
 test("explicit reasoning effort is a hard candidate constraint", () => {
   const compatible = resolveCompatibleCandidates({
     requestedReasoningEffort: "high",

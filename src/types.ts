@@ -235,4 +235,8 @@ export type PreviousDecision = {
 };
 
 // Request capabilities that hard-constrain candidate eligibility.
-export type HardCapability = "image_input" | "structured_output" | "openai_hosted_web_search";
+export type HardCapability =
+  | "image_input"
+  | "structured_output"
+  | "openai_hosted_web_search"
+  | "reasoning_configuration_update";

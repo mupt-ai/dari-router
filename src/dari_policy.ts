@@ -278,6 +278,7 @@ function defaultDariMetadata<Metadata>(
     api: candidate.api,
     supportsImageInput: candidate.capabilities.imageInput,
     supportsHostedWebSearch: false,
+    supportsReasoningConfigurationUpdate: false,
     supportsStructuredOutput: candidate.capabilities.structuredOutput,
     supportedThinkingLevels: [...candidate.reasoningEfforts],
   };

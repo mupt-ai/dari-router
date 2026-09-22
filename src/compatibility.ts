@@ -16,6 +16,9 @@ export type CandidateModelMetadata = {
   api: string;
   supportsImageInput: boolean;
   supportsHostedWebSearch: boolean;
+  // Whether the model accepts Responses configuration_update items that
+  // change reasoning effort without rewriting the request-level prefix.
+  supportsReasoningConfigurationUpdate?: boolean;
   // Whether the provider API can serialize response_format for structured
   // output (JSON schema) requests.
   supportsStructuredOutput: boolean;
@@ -82,6 +85,18 @@ export function resolveCompatibleCandidates(args: {
         "Hosted web search requires an enabled OpenAI or Azure Responses model for this router.",
         "unsupported_tool",
         "tools",
+      );
+    }
+  }
+
+  if (args.requiredCapabilities.includes("reasoning_configuration_update")) {
+    candidates = candidates.filter(({ metadata }) => metadata.supportsReasoningConfigurationUpdate);
+    if (candidates.length === 0) {
+      throw new RouterCoreError(
+        "invalid_request",
+        "Reasoning configuration updates require an enabled GPT-6 Responses model for this router.",
+        "unsupported_reasoning_configuration",
+        "input",
       );
     }
   }

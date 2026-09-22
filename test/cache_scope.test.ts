@@ -7,6 +7,8 @@ import {
 } from "../src/cache_scope.js";
 
 const SOL = "openai/gpt-5.6-sol";
+const GPT_6_SOL = "openai/gpt-6-sol";
+const GPT_6_LUNA = "openai/gpt-6-luna";
 const GLM = "zai-org/GLM-5.2";
 const GLM_5_3 = "zai-org/GLM-5.3";
 
@@ -16,6 +18,18 @@ test("partition keys follow the provider's reasoning cache scope", () => {
   expect(cachePartitionKey(SOL, "low")).not.toBe(cachePartitionKey(SOL, "high"));
   expect(cachePartitionKey(SOL, null)).not.toBe(cachePartitionKey(SOL, "low"));
   expect(cachePartitionKey(SOL, "low")).toBe(cachePartitionKey(SOL, "low"));
+
+  // GPT-6 preserves first-party OpenAI cache identity across effort changes.
+  expect(reasoningCacheScope(GPT_6_SOL, "openai")).toBe("shared");
+  expect(reasoningCacheScope(GPT_6_LUNA, "openai")).toBe("shared");
+  expect(cachePartitionKey(GPT_6_SOL, "low", undefined, "openai")).toBe(
+    cachePartitionKey(GPT_6_SOL, "max", undefined, "openai"),
+  );
+  expect(cachePartitionKey(GPT_6_LUNA, "off", undefined, "openai")).toBe(
+    cachePartitionKey(GPT_6_LUNA, "high", undefined, "openai"),
+  );
+  // Do not assume an intermediary provider offers the same cache contract.
+  expect(reasoningCacheScope(GPT_6_SOL, "openrouter")).toBe("effort_keyed");
 
   // Shared: one partition per model, so effort cannot split it.
   const fireworksScope = (model: string) => reasoningCacheScope(model, "fireworks");
