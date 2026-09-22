@@ -9,6 +9,9 @@ export {
 export {
   createAutoRouter,
 } from "./auto_router.js";
+export {
+  createJevRouter,
+} from "./jev_router.js";
 
 export type {
   RouterProtocol,
@@ -62,6 +65,7 @@ export type {
   PiRuntime,
 } from "./pi_runtime.js";
 export type { CreateAutoRouterOptions } from "./auto_router.js";
+export type { CreateJevRouterOptions } from "./jev_router.js";
 export type { ReasoningEffort } from "./types.js";
 export { RouterFrameworkError } from "./framework_error.js";
 export type { RouterFrameworkErrorKind } from "./framework_error.js";

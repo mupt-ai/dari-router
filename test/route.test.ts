@@ -45,7 +45,7 @@ function routeInput(overrides: Partial<RouteInput> = {}): RouteInput {
       return metadata;
     },
     requiredCapabilities: [],
-    strategy: "slm",
+    strategy: "dari",
     pricing: (model) => PRICING[model] ?? null,
     messages: [
       { role: "system", content: "You are a helpful assistant." },

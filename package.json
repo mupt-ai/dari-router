@@ -63,6 +63,7 @@
     "example": "bun run examples/create_router.ts",
     "example:pi": "bun run examples/pi_runtime.ts",
     "example:dari-policy": "bun run examples/dari_policy.ts",
+    "example:jev": "bun run examples/jev_router.ts",
     "example:decision-pipeline": "bun run examples/basic_route.ts",
     "example:lease-stores": "bun run examples/lease_stores.ts"
   },

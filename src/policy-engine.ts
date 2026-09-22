@@ -21,5 +21,6 @@ export * from "./selector_wire.js";
 export * from "./selector_parse.js";
 export * from "./anonymous_actions.js";
 export * from "./route.js";
+export * from "./jev_selector.js";
 export { createDariRoutingPolicy } from "./dari_policy.js";
 export type { DariPolicyDetails, DariPolicyState, DariRoutingPolicyOptions } from "./dari_policy.js";

@@ -1,4 +1,4 @@
-# SLM Router
+# Dari Router
 
 The smallest managed-router example. Dari's selector automatically chooses between the enabled models, using Dari-managed provider keys.
 

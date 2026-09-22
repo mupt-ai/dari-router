@@ -156,7 +156,7 @@ export type RouterPrefixHit = {
   updated_at: string;
 };
 
-export type RoutingStrategy = "slm" | "custom";
+export type RoutingStrategy = "dari" | "custom";
 
 export type CustomRouterRule = {
   // Natural-language condition describing when this rule applies, e.g.

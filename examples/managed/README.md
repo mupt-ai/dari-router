@@ -16,7 +16,7 @@ Your organization needs access to the providers and models used by an example. F
 
 ## Examples
 
-- [`slm-router/`](slm-router) — automatic selection with managed provider credentials.
+- [`dari/`](dari) — automatic selection with managed provider credentials.
 - [`byok-router/`](byok-router) — automatic selection with a provider key from your environment.
 - [`custom-rules-router/`](custom-rules-router) — natural-language rules with explicit model and reasoning-level constraints.
 - [`eval-router/`](eval-router) — automatic selection informed by an organization eval scorecard.
@@ -26,7 +26,7 @@ Your organization needs access to the providers and models used by an example. F
 From an example directory:
 
 ```bash
-cd examples/managed/slm-router
+cd examples/managed/dari
 dari router create ./router.yml
 dari router get <router_id>
 ```

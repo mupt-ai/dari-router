@@ -74,10 +74,10 @@ const CONFIG: CustomRouterConfig = {
   default_thinking_level: "off",
 };
 
-test("applies cache switch pruning to SLM candidates", () => {
+test("applies cache switch pruning to Dari candidates", () => {
   const candidates = [candidate("warm", "high"), candidate("cold", "low")];
   const resolution = resolveStrategyCandidates({
-    strategy: "slm",
+    strategy: "dari",
     candidates,
     costEstimates: [
       estimate("warm", "high", 1, 1000, 20),

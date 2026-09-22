@@ -40,7 +40,7 @@ type CustomDetails = {
 };
 
 export type StrategyCandidateResolution = CandidateSet & (
-  | { strategy: "slm"; pruning: CandidatePruningAudit }
+  | { strategy: "dari"; pruning: CandidatePruningAudit }
   | { strategy: "custom"; pruning: null; custom: null }
   | {
       strategy: "custom";
@@ -66,7 +66,7 @@ type CandidateResolutionArgs = {
 export function resolveStrategyCandidates(
   args: CandidateResolutionArgs,
 ): StrategyCandidateResolution {
-  if (args.strategy === "slm") {
+  if (args.strategy === "dari") {
     const pruned = pruneSwitchCandidates({
       candidates: args.candidates,
       costEstimates: args.costEstimates,
@@ -74,7 +74,7 @@ export function resolveStrategyCandidates(
       minSwitchSavingsRatio: MIN_SWITCH_SAVINGS_RATIO,
     });
     return {
-      strategy: "slm",
+      strategy: "dari",
       candidates: pruned.candidates,
       allCandidates: [...args.candidates],
       costEstimates: pruned.costEstimates,

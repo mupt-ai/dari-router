@@ -2,9 +2,11 @@
 // anonymous action slots ("A", "B", ..., "AA", ...) and every model-identifying
 // field in the selector input is replaced by its slot, so a trained policy
 // cannot memorize model names or list positions. This is the canonical
-// open-weight selector protocol used by Dari's SLM routing strategy; the
+// open-weight selector protocol used by Dari's routing strategy; the
 // named-candidate protocol in selector_input.ts/prompts.ts remains available
 // for custom routers that use a general-purpose LLM selector.
+
+import { createHash } from "node:crypto";
 
 import {
   ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
@@ -436,6 +438,25 @@ export function parseAnonymousActionSelection(
     );
   }
   return { action, candidate: slot.candidate, turns };
+}
+
+// Deterministic per-conversation rng so a conversation's action letters stay
+// fixed across turns. The hash keeps unrelated conversation identifiers from
+// exposing adjacent seeds.
+export function sessionRng(sessionId: string): Rng {
+  const digest = createHash("sha256")
+    .update("dari-anonymous-actions-v1\u0000")
+    .update(sessionId)
+    .digest();
+  let state = digest.readUInt32BE(0);
+  return () => {
+    // Mulberry32.
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 0x1_0000_0000;
+  };
 }
 
 // Fisher-Yates copy, drawing from the end, matching d3-array's shuffler so an

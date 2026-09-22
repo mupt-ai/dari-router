@@ -50,7 +50,7 @@ export type DariRoutingPolicyOptions<Metadata = unknown> = {
   state?: (
     input: RoutingPolicyInput<Metadata>,
   ) => DariPolicyState | Promise<DariPolicyState>;
-  strategy?: "slm" | "custom";
+  strategy?: "dari" | "custom";
   customConfig?: CustomRouterConfig | null;
   modelPrices?: Record<string, RouterModelPrice>;
 };
@@ -138,7 +138,7 @@ export function createDariRoutingPolicyInternal<Metadata = unknown>(
         modelThinkingLevels: Object.fromEntries(
           input.candidates.map((candidate) => [candidate.id, [...candidate.reasoningEfforts]]),
         ),
-        strategy: options.strategy ?? "slm",
+        strategy: options.strategy ?? "dari",
         ...(options.customConfig === undefined ? {} : { customConfig: options.customConfig }),
         modelPrices: options.modelPrices ?? {},
         pricing: (model) => pricingByModel.get(model) ?? null,

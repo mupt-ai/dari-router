@@ -58,7 +58,7 @@ const input: RouteInput = {
     return entry;
   },
   requiredCapabilities: [],
-  strategy: "slm",
+  strategy: "dari",
   pricing: (model) => pricing[model] ?? null,
   // Keep the candidate list broad but the pairs manageable: pin each model to
   // a subset of its supported levels, as a router configuration would.

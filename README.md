@@ -8,7 +8,7 @@ It gives you three replaceable pieces:
 - **Policies** choose an eligible model.
 - **Executors** call the chosen model.
 
-The root package also includes a Pi AI executor and a hosted Auto Router policy.
+The root package also includes a Pi AI executor, a hosted Auto Router policy, and a Jev Router policy backed by TypeSafe's Jev model.
 
 ## Install
 
