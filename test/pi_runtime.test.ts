@@ -1,10 +1,7 @@
 import { expect, test } from "bun:test";
 import type {
-  Api,
-  AssistantMessage,
   AssistantMessageEvent,
   Context,
-  Model,
   SimpleStreamOptions,
 } from "@mupt-ai/pi-ai";
 
@@ -12,40 +9,23 @@ import {
   createPiRuntime,
   createRouter,
   type PiCredentialInput,
-  type PiModelRegistry,
-  type PiRuntime,
   type RouterCompletion,
-  type RouterRequest,
 } from "../src/index.js";
 import { createDariRoutingPolicy } from "../src/policy-engine.js";
 import { encodeProviderContinuationState } from "../src/protocols.js";
-import { piContext } from "../src/pi_context.js";
-import { piOptions } from "../src/pi_options.js";
-import {
-  decodeOpenAIReasoningSignature,
-  encodeOpenAIReasoningSignature,
-} from "../src/pi_reasoning_signature.js";
 import {
   ANTHROPIC_ID,
   ANTHROPIC_MODEL,
   assistant,
   asyncEvents,
-  AZURE_MODEL,
-  BEDROCK_MODEL,
-  COMPLETIONS_MODEL,
   fakeRegistry,
-  GOOGLE_MODEL,
   jsonRequest,
   OPENAI_ID,
   OPENAI_MODEL,
-  piExecution,
   piModel,
-  routerRequest,
   SELECTOR_ID,
   SELECTOR_MODEL,
   singleModelRouter,
-  sseJsonFrames,
-  VERTEX_MODEL,
 } from "./pi_runtime.fixtures.js";
 
 test("Pi runtime executes a declared model end to end without a custom executor", async () => {

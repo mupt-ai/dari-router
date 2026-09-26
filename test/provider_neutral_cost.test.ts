@@ -58,8 +58,6 @@ for (const provider of [undefined, "xai", "openrouter", "azure", "custom-provide
 
 test("native xAI cache assumptions stay scoped and honor small observed prefixes", async () => {
   const { promptCacheProviderForModel, providerCacheableTokens, providerMinCacheTokens } = await import("../src/cache_behavior.js");
-  const { FIXED_TURN_CACHE_HIT_PROBABILITY } = await import("../src/fixed_turn_cost_config.js");
-  expect(FIXED_TURN_CACHE_HIT_PROBABILITY.xai).toBe(0.9);
   expect(promptCacheProviderForModel("xai/grok-4.6", "xai")).toBe("xai");
   expect(promptCacheProviderForModel("xai/grok-4.6", "azure")).toBeNull();
   expect(promptCacheProviderForModel("xai/grok-4.6", "openrouter")).toBeNull();

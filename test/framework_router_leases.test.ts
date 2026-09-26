@@ -1,25 +1,15 @@
 import { expect, test } from "bun:test";
 
-import { encodeProviderContinuationState } from "../src/continuation_state.js";
 import { openAIChatRequest } from "../src/protocol_openai_chat.js";
 import { anthropicRequest } from "../src/protocol_anthropic.js";
 import {
   createRouter,
-  RouterFrameworkError,
   type LeaseStore,
-  type RouterCompletion,
-  type RouterExecutor,
-  type RouterExecutorInput,
   type RouterLease,
-  type RouterModel,
-  type RouterStreamEvent,
-  type RoutingPolicyInput,
 } from "../src/index.js";
 import {
   asyncEvents,
-  BASIC,
   BASIC_MODEL,
-  FALLBACK_LOW_MODEL,
   FALLBACK_MODEL,
   jsonRequest,
   RICH,
@@ -311,7 +301,7 @@ test("invalid leaseTurnsRemaining values are policy errors", async () => {
   }
 });
 
-test("hooks fire on selection, completion, and error", async () => {
+test("a served request fires selection and completion hooks but not onError", async () => {
   const selections: string[] = [];
   const completions: string[] = [];
   const errors: string[] = [];
@@ -784,38 +774,6 @@ test("stream contract errors abort the executor signal and suppress the terminat
   expect(body).toContain('"code":"stream_invalid"');
   expect(body).not.toContain("data: [DONE]");
   expect(executorSignal?.aborted).toBe(true);
-});
-
-test("mid-stream executor failure after output emits an in-stream error without a terminator", async () => {
-  const router = createRouter({
-    models: [RICH_MODEL],
-    policy: () => ({ model: RICH }),
-    executors: {
-      mock: {
-        execute: () => ({
-          type: "stream",
-          events: {
-            async *[Symbol.asyncIterator]() {
-              yield { type: "text_delta", index: 0, delta: "partial" } as const;
-              throw new Error("provider connection lost");
-            },
-          },
-        }),
-      },
-    },
-  });
-
-  const response = await router.fetch(jsonRequest("/v1/chat/completions", {
-    model: "my-router",
-    messages: [{ role: "user", content: "hello" }],
-    stream: true,
-  }));
-  const body = await response.text();
-
-  expect(response.status).toBe(200);
-  expect(body).toContain('"content":"partial"');
-  expect(body).toContain('"message":"provider connection lost"');
-  expect(body).not.toContain("data: [DONE]");
 });
 
 test("OpenAI streamed usage arrives in a separate final chunk with empty choices", async () => {

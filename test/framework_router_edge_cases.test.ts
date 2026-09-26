@@ -5,22 +5,13 @@ import { openAIChatRequest } from "../src/protocol_openai_chat.js";
 import { anthropicRequest } from "../src/protocol_anthropic.js";
 import {
   createRouter,
-  RouterFrameworkError,
   type LeaseStore,
-  type RouterCompletion,
   type RouterExecutor,
-  type RouterExecutorInput,
-  type RouterLease,
-  type RouterModel,
-  type RouterStreamEvent,
-  type RoutingPolicyInput,
 } from "../src/index.js";
 import {
   asyncEvents,
-  BASIC,
   BASIC_MODEL,
   FALLBACK_LOW_MODEL,
-  FALLBACK_MODEL,
   jsonRequest,
   RICH,
   RICH_MODEL,

@@ -313,7 +313,8 @@ function block(prompt: string, action: string): string[] {
 
 test("different rng streams change the mapping but keep the candidates", () => {
   const first = assignAnonymousActions(CANDIDATES, rng(42));
-  const second = assignAnonymousActions(CANDIDATES, rng(43));
+  const second = assignAnonymousActions(CANDIDATES, rng(1));
+  expect(second.map((slot) => slot.candidate)).not.toEqual(first.map((slot) => slot.candidate));
   expect(
     new Set(second.map((slot) => JSON.stringify(slot.candidate))),
   ).toEqual(new Set(first.map((slot) => JSON.stringify(slot.candidate))));

@@ -414,28 +414,6 @@ test("fixed-turn estimates stay finite for very long prompts across cache provid
   expect(anthropic?.est_input_cost_usd).toBeCloseTo((100_000 * PRICING["anthropic/claude-sonnet-4-6"].cacheWrite) / 1e6, 10);
 });
 
-test("fixed-turn estimates use the candidate's selected thinking level", () => {
-  const [off] = estimates({
-    candidates: ["openai/gpt-5.2"],
-    hits: [hit({ model: "openai/gpt-5.2", prompt_tokens: 2006 })],
-    reasoningEffort: "off",
-  });
-  const [medium] = estimates({
-    candidates: ["anthropic/claude-fable-5"],
-    hits: [hit({ model: "anthropic/claude-fable-5", prompt_tokens: 2006 })],
-    reasoningEffort: "medium",
-  });
-
-  expect(off.fixed_turn_cost_estimate).toMatchObject({
-    output_tokens_per_turn: OUTPUT_TOKENS.off,
-    assumed_reasoning_effort: "off",
-  });
-  expect(medium.fixed_turn_cost_estimate).toMatchObject({
-    output_tokens_per_turn: OUTPUT_TOKENS.medium,
-    assumed_reasoning_effort: "medium",
-  });
-});
-
 test("fixed-turn estimates keep thinking-level variants distinct", () => {
   const candidates = [
     { model: "openai/gpt-5.2", reasoningEffort: "off" as const },

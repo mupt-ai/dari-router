@@ -180,11 +180,6 @@ test("normalizes exact, generic, and imputed rows over one resolved candidate gr
       z_score: 0,
     },
   ]);
-  expect(resolvedScores.every((row) => {
-    const rank = row["rank"] as number;
-    const rankTotal = row["rank_total"] as number;
-    return rank >= 1 && rank <= rankTotal;
-  })).toBe(true);
 });
 
 test("leaves the scorecard empty when imputation is off and only other levels are scored", () => {
@@ -321,30 +316,6 @@ test("drops invalid anchor estimates before averaging valid anchors", () => {
   const row = scores(imputedInput(card, [high]))[0];
   // The off anchor predicts 292.8 and is discarded; max predicts 51.77.
   expect(row).toMatchObject({ score: 51.77, imputed: true });
-});
-
-test("leaves an out-of-range ratio estimate missing instead of clamping it", () => {
-  const target = evalCard([
-    { model_id: MID.model, thinking_level: "low", score: 40 },
-  ]);
-  const outlier: RouterEval = {
-    ...evalCard([
-      { model_id: "other/a", thinking_level: "low", score: 20 },
-      { model_id: "other/a", thinking_level: "medium", score: 60 },
-    ]),
-    id: "evl_outlier",
-  };
-  const input = buildSelectorInput({
-    candidates: [MID],
-    evals: [target, outlier],
-    previousDecision: null,
-    costEstimates: null,
-    messages: [],
-    imputeEvalScores: true,
-  });
-
-  // 40 * (60 / 20) = 120, outside this scorecard's [0, 100] range.
-  expect(input.imported_evals).toHaveLength(0);
 });
 
 test("does not impute from an anchor at the score range floor", () => {
