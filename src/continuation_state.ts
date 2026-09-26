@@ -21,12 +21,28 @@ export type ProviderContinuationState =
       source: ProviderIdentity;
       thinking: string;
       signature: string;
+      effort?: AnthropicEffort;
     }
   | {
       kind: "anthropic_redacted_thinking";
       source: ProviderIdentity;
       data: string;
+      effort?: AnthropicEffort;
     };
+
+/**
+ * The effort a managed-effort Claude model generated the block under. Those
+ * models bind each thinking block to its request prefix, which included an
+ * effort marker right before the turn; replay must restore that marker or the
+ * API drops the block and the model loses its reasoning.
+ */
+export type AnthropicEffort = (typeof ANTHROPIC_EFFORTS)[number];
+
+const ANTHROPIC_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export function isAnthropicEffort(value: unknown): value is AnthropicEffort {
+  return ANTHROPIC_EFFORTS.includes(value as AnthropicEffort);
+}
 
 /** @deprecated Alias kept for the framework-prefixed vocabulary; use {@link ProviderIdentity}. */
 export type RouterProviderIdentity = ProviderIdentity;
@@ -154,10 +170,19 @@ function envelopeFor(value: ProviderContinuationState): EnvelopeV1 {
       v: 1,
       kind: value.kind,
       source: value.source,
-      state: { thinking: value.thinking, signature: value.signature },
+      state: {
+        thinking: value.thinking,
+        signature: value.signature,
+        ...(value.effort ? { effort: value.effort } : {}),
+      },
     };
   }
-  return { v: 1, kind: value.kind, source: value.source, state: { data: value.data } };
+  return {
+    v: 1,
+    kind: value.kind,
+    source: value.source,
+    state: { data: value.data, ...(value.effort ? { effort: value.effort } : {}) },
+  };
 }
 
 function stateFromEnvelope(envelope: EnvelopeV1): ProviderContinuationState {
@@ -191,9 +216,15 @@ function stateFromEnvelope(envelope: EnvelopeV1): ProviderContinuationState {
       source: envelope.source,
       thinking: envelope.state.thinking,
       signature: envelope.state.signature,
+      ...(isAnthropicEffort(envelope.state.effort) ? { effort: envelope.state.effort } : {}),
     };
   }
-  return { kind: envelope.kind, source: envelope.source, data: envelope.state.data };
+  return {
+    kind: envelope.kind,
+    source: envelope.source,
+    data: envelope.state.data,
+    ...(isAnthropicEffort(envelope.state.effort) ? { effort: envelope.state.effort } : {}),
+  };
 }
 
 function validateEnvelope(
@@ -277,7 +308,7 @@ function validateState(
     };
   }
   if (continuationKind === "anthropic_thinking") {
-    if (!hasExactKeys(value, ["thinking", "signature"])) {
+    if (!hasKeys(value, ["thinking", "signature"], ["effort"])) {
       throw invalidState(errorKind, "Anthropic thinking state schema is invalid.");
     }
     if (typeof value.thinking !== "string") {
@@ -286,12 +317,16 @@ function validateState(
     return {
       thinking: value.thinking,
       signature: nonEmptyString(value.signature, errorKind, "signature"),
+      ...anthropicEffortState(value.effort, errorKind),
     };
   }
-  if (!hasExactKeys(value, ["data"])) {
+  if (!hasKeys(value, ["data"], ["effort"])) {
     throw invalidState(errorKind, "Anthropic redacted thinking state schema is invalid.");
   }
-  return { data: nonEmptyString(value.data, errorKind, "data") };
+  return {
+    data: nonEmptyString(value.data, errorKind, "data"),
+    ...anthropicEffortState(value.effort, errorKind),
+  };
 }
 
 function hostedToolCallIds(
@@ -353,6 +388,21 @@ function nonEmptyString(
     throw invalidState(kind, `Provider continuation state ${field} must be a non-empty string.`);
   }
   return value;
+}
+
+function anthropicEffortState(
+  value: unknown,
+  kind: "configuration" | "invalid_request",
+): { effort?: string } {
+  if (value === undefined) return {};
+  if (!isAnthropicEffort(value)) throw invalidState(kind, "Anthropic thinking effort is invalid.");
+  return { effort: value };
+}
+
+function hasKeys(value: Record<string, unknown>, required: string[], optional: string[]): boolean {
+  const keys = Object.keys(value);
+  return required.every((key) => keys.includes(key))
+    && keys.every((key) => required.includes(key) || optional.includes(key));
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {

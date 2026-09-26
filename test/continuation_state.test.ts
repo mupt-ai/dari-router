@@ -41,6 +41,32 @@ test("anthropic thinking and redacted continuations round-trip", () => {
   expect(decodeUntrustedProviderContinuationState(encodeProviderContinuationState(redacted))).toEqual(redacted);
 });
 
+test("anthropic continuations carry the effort their turn was generated under", () => {
+  const thinking: ProviderContinuationState = {
+    kind: "anthropic_thinking",
+    source: ANTHROPIC_SOURCE,
+    thinking: "Inspect first.",
+    signature: "anthropic-signature",
+    effort: "high",
+  };
+  const redacted: ProviderContinuationState = {
+    kind: "anthropic_redacted_thinking",
+    source: ANTHROPIC_SOURCE,
+    data: "redacted-blob",
+    effort: "low",
+  };
+  expect(decodeUntrustedProviderContinuationState(encodeProviderContinuationState(thinking))).toEqual(thinking);
+  expect(decodeUntrustedProviderContinuationState(encodeProviderContinuationState(redacted))).toEqual(redacted);
+
+  const forged = `dari-pcs-v1.${Buffer.from(JSON.stringify({
+    v: 1,
+    kind: "anthropic_thinking",
+    source: ANTHROPIC_SOURCE,
+    state: { thinking: "x", signature: "sig", effort: "turbo" },
+  })).toString("base64url")}`;
+  expect(() => decodeUntrustedProviderContinuationState(forged)).toThrow("effort is invalid");
+});
+
 test("non-Dari provider state decodes to null without throwing", () => {
   expect(decodeUntrustedProviderContinuationState("provider-native-ciphertext")).toBeNull();
 });
