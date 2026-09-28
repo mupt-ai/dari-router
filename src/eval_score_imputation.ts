@@ -14,9 +14,22 @@ export type EvalForImputation = {
 
 export type ThinkingLevelRatios = ReadonlyMap<string, number>;
 
+// Only named, same-family predecessors may stand in for a new model while
+// benchmark sources catch up. Never infer a predecessor from a slug.
+const PREVIOUS_GENERATION: Readonly<Record<string, string>> = {
+  "openai/gpt-6-sol": "openai/gpt-5.6-sol",
+  "openai/gpt-6-luna": "openai/gpt-5.6-luna",
+  "anthropic/claude-opus-5-5": "anthropic/claude-opus-5",
+  "anthropic/claude-fable-5-1": "anthropic/claude-fable-5",
+  "meta/muse-spark-1.3": "meta/muse-spark-1.2",
+  "zai-org/GLM-5.3": "zai-org/GLM-5.2",
+  "xai/grok-4.7": "xai/grok-4.6",
+};
+
 export type ResolvedRouterEvalScore = {
   score: number;
   imputed: boolean;
+  sourceModelId?: string;
 };
 
 export function createThinkingLevelRatios(
@@ -68,14 +81,33 @@ export function resolveRouterEvalScore(args: {
   if (match) return { score: match.score, imputed: false };
   if (!(args.impute ?? false)) return null;
 
+  const ratios = args.ratios ?? new Map();
   const score = pairwiseRatioScore(
     modelScores,
     args.thinkingLevel,
     args.minScore,
     args.maxScore,
-    args.ratios ?? new Map(),
+    ratios,
   );
-  return score === null ? null : { score, imputed: true };
+  if (score !== null) return { score, imputed: true };
+
+  // A measured current-generation score or a valid same-model level
+  // estimate always wins. Borrow only for a still-missing candidate level.
+  const previous = PREVIOUS_GENERATION[args.modelId];
+  if (!previous) return null;
+  const previousScores = args.scores.filter((row) => row.model_id === previous);
+  const predecessor = previousScores.find((row) => row.thinking_level === args.thinkingLevel)
+    ?? previousScores.find((row) => row.thinking_level == null);
+  const borrowed = predecessor?.score ?? pairwiseRatioScore(
+    previousScores,
+    args.thinkingLevel,
+    args.minScore,
+    args.maxScore,
+    ratios,
+  );
+  return borrowed === null || borrowed === undefined
+    ? null
+    : { score: borrowed, imputed: true, sourceModelId: previous };
 }
 
 function pairwiseRatioScore(

@@ -46,6 +46,31 @@ test("resolves exact and generic rows before imputation", () => {
   ).toEqual({ score: 91, imputed: false });
 });
 
+test("borrows only a named predecessor when the current generation has no measured score", () => {
+  const scores = [
+    { model_id: "anthropic/claude-opus-5", thinking_level: "high" as const, score: 73 },
+    { model_id: "anthropic/claude-opus-5-5", thinking_level: "low" as const, score: 82 },
+  ];
+  const common = { scores, minScore: 0, maxScore: 100, impute: true };
+  expect(resolveRouterEvalScore({
+    ...common, modelId: "anthropic/claude-opus-5-5", thinkingLevel: "high",
+  })).toEqual({ score: 73, imputed: true, sourceModelId: "anthropic/claude-opus-5" });
+  expect(resolveRouterEvalScore({
+    ...common, modelId: "anthropic/claude-sonnet-5", thinkingLevel: "high",
+  })).toBeNull();
+  expect(resolveRouterEvalScore({
+    ...common, modelId: "anthropic/claude-opus-5-5", thinkingLevel: "low",
+  })).toEqual({ score: 82, imputed: false });
+  expect(resolveRouterEvalScore({
+    scores: scores.slice(0, 1), minScore: 0, maxScore: 100,
+    modelId: "anthropic/claude-opus-5-5", thinkingLevel: "high", impute: false,
+  })).toBeNull();
+  expect(resolveRouterEvalScore({
+    scores: scores.slice(0, 1), minScore: 0, maxScore: 100,
+    modelId: "anthropic/claude-opus-5-5", thinkingLevel: "high", impute: true,
+  })).toEqual({ score: 73, imputed: true, sourceModelId: "anthropic/claude-opus-5" });
+});
+
 test("uses ratios learned from every supplied calibration eval", () => {
   const target = evalCard("target", [
     { model_id: "openai/target", thinking_level: "low", score: 40 },

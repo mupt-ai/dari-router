@@ -63,6 +63,7 @@ type ResolvedEvalScore = {
   score: number;
   notes: string | null;
   imputed?: true;
+  source_model_id?: string;
 };
 
 export type SelectorInput = {
@@ -130,9 +131,8 @@ export function buildSelectorInput(args: {
   } | null;
   modelFallbackEnabled?: boolean;
   fallbackRequiresDifferentProvider?: boolean;
-  // When true, candidates with no exact-level and no generic "Any" score use
-  // cross-model thinking-level ratios from the same eval card. Off by default
-  // so existing routers keep measured-only scores.
+  // When true, fill missing levels using calibrated thinking-level ratios or
+  // a named predecessor from the same model family. Off by default.
   imputeEvalScores?: boolean;
   // Calibrates cross-level ratios without adding these cards to imported_evals.
   imputationReferenceEvals?: RouterEval[];
@@ -257,6 +257,7 @@ function matchingEvalScores(
         score: resolved.score,
         notes: measured?.notes ?? null,
         ...(resolved.imputed ? { imputed: true as const } : {}),
+        ...(resolved.sourceModelId ? { source_model_id: resolved.sourceModelId } : {}),
       };
     })
     .filter((score): score is ResolvedEvalScore => score !== null);

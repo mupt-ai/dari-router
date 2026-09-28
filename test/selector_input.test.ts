@@ -318,6 +318,24 @@ test("drops invalid anchor estimates before averaging valid anchors", () => {
   expect(row).toMatchObject({ score: 51.77, imputed: true });
 });
 
+test("selector labels borrowed predecessor scores and excludes them when imputation is off", () => {
+  const next = { ...MID, model: "anthropic/claude-opus-5-5", reasoningEffort: "high" } satisfies RoutingCandidate;
+  const card = evalCard([
+    { model_id: "anthropic/claude-opus-5", thinking_level: "high", score: 71 },
+  ]);
+  const imputed = imputedInput(card, [next]);
+  expect(scores(imputed)[0]).toMatchObject({
+    model_id: next.model,
+    score: 71,
+    imputed: true,
+    source_model_id: "anthropic/claude-opus-5",
+  });
+  expect(buildSelectorInput({
+    candidates: [next], evals: [card], previousDecision: null,
+    costEstimates: null, messages: [], imputeEvalScores: false,
+  }).imported_evals).toHaveLength(0);
+});
+
 test("does not impute from an anchor at the score range floor", () => {
   const target = evalCard([
     { model_id: MID.model, thinking_level: "low", score: 0 },
