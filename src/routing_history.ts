@@ -1,6 +1,9 @@
 // Router-only history compaction shared by production routing and GRPO
 // training. Provider-bound requests keep the complete conversation.
 
+// Characters of conversation the anonymous policy selectors see.
+export const ROUTER_HISTORY_CHAR_BUDGET = 16_000;
+
 type RoutingHistoryMessage = {
   role?: unknown;
   content?: unknown;

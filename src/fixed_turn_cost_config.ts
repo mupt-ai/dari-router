@@ -10,6 +10,11 @@ export const FIXED_TURN_COST_PROJECTED_TURNS = [5, 10, 30] as const;
 // cold start it pays on the first turn across the warm turns that follow.
 export const SELECTOR_LEASE_TURNS = [5, 10, 30] as const;
 
+// How many turns before a lease expires the next decision is prefetched, so
+// the switch adds no latency. Training captures the policy's observation at
+// the same point so its information set matches serving.
+export const LEASE_DECISION_TURN_LAG = 2;
+
 // The horizon used wherever a single scalar cost is needed rather than the
 // whole curve, notably warm-incumbent pruning.
 export const FIXED_TURN_COST_COMPARISON_TURNS = 10;
