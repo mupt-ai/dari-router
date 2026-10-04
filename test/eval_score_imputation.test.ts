@@ -71,6 +71,37 @@ test("borrows only a named predecessor when the current generation has no measur
   })).toEqual({ score: 73, imputed: true, sourceModelId: "anthropic/claude-opus-5" });
 });
 
+test("uses GPT-6 Sol scores for GPT-6.1 Sol only when its score is missing", () => {
+  const scores = [
+    { model_id: "openai/gpt-6-sol", thinking_level: "high" as const, score: 87 },
+    { model_id: "openai/gpt-6-sol", thinking_level: null, score: 79 },
+    { model_id: "openai/gpt-6.1-sol", thinking_level: "low" as const, score: 93 },
+  ];
+  const common = { scores, minScore: 0, maxScore: 100, impute: true };
+
+  expect(resolveRouterEvalScore({
+    ...common, modelId: "openai/gpt-6.1-sol", thinkingLevel: "high",
+  })).toEqual({
+    score: 87,
+    imputed: true,
+    sourceModelId: "openai/gpt-6-sol",
+  });
+  expect(resolveRouterEvalScore({
+    ...common, modelId: "openai/gpt-6.1-sol", thinkingLevel: "medium",
+  })).toEqual({
+    score: 79,
+    imputed: true,
+    sourceModelId: "openai/gpt-6-sol",
+  });
+  expect(resolveRouterEvalScore({
+    ...common, modelId: "openai/gpt-6.1-sol", thinkingLevel: "low",
+  })).toEqual({ score: 93, imputed: false });
+  expect(resolveRouterEvalScore({
+    scores: scores.slice(0, 2), minScore: 0, maxScore: 100,
+    modelId: "openai/gpt-6.1-sol", thinkingLevel: "high", impute: false,
+  })).toBeNull();
+});
+
 test("uses ratios learned from every supplied calibration eval", () => {
   const target = evalCard("target", [
     { model_id: "openai/target", thinking_level: "low", score: 40 },

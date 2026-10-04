@@ -7,6 +7,7 @@ import {
 } from "../src/cache_scope.js";
 
 const SOL = "openai/gpt-5.6-sol";
+const GPT_6_1_SOL = "openai/gpt-6.1-sol";
 const GPT_6_SOL = "openai/gpt-6-sol";
 const GPT_6_LUNA = "openai/gpt-6-luna";
 const GLM = "zai-org/GLM-5.2";
@@ -19,7 +20,8 @@ test("partition keys follow the provider's reasoning cache scope", () => {
   expect(cachePartitionKey(SOL, null)).not.toBe(cachePartitionKey(SOL, "low"));
   expect(cachePartitionKey(SOL, "low")).toBe(cachePartitionKey(SOL, "low"));
 
-  // GPT-6 preserves first-party OpenAI cache identity across effort changes.
+  // GPT-6 Sol variants share first-party OpenAI cache identity across efforts.
+  expect(reasoningCacheScope(GPT_6_1_SOL, "openai")).toBe("shared");
   expect(reasoningCacheScope(GPT_6_SOL, "openai")).toBe("shared");
   expect(reasoningCacheScope(GPT_6_LUNA, "openai")).toBe("shared");
   expect(cachePartitionKey(GPT_6_SOL, "low", undefined, "openai")).toBe(

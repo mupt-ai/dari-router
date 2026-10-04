@@ -20,6 +20,7 @@ export type ReasoningCacheScope = "effort_keyed" | "shared";
 // Unlisted models default to effort_keyed: the safe direction is to
 // under-claim warmth, never to price a cold prefix as a cache read.
 export const DEFAULT_REASONING_CACHE_SCOPES: Readonly<Record<string, ReasoningCacheScope>> = {
+  "openai:openai/gpt-6.1-sol": "shared",
   "openai:openai/gpt-6-sol": "shared",
   "openai:openai/gpt-6-luna": "shared",
   "openai:openai/gpt-5.6-sol": "effort_keyed",

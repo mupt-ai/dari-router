@@ -17,6 +17,7 @@ export type ThinkingLevelRatios = ReadonlyMap<string, number>;
 // Only named, same-family predecessors may stand in for a new model while
 // benchmark sources catch up. Never infer a predecessor from a slug.
 const PREVIOUS_GENERATION: Readonly<Record<string, string>> = {
+  "openai/gpt-6.1-sol": "openai/gpt-6-sol",
   "openai/gpt-6-sol": "openai/gpt-5.6-sol",
   "openai/gpt-6-luna": "openai/gpt-5.6-luna",
   "anthropic/claude-opus-5-5": "anthropic/claude-opus-5",
