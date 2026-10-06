@@ -1,6 +1,6 @@
 {
   "name": "@mupt-ai/dari-router",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "End-to-end TypeScript framework for routing across LLMs with built-in Pi AI execution and pluggable policies and executors.",
   "license": "Apache-2.0",
   "repository": {
