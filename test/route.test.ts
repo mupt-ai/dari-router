@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 
 import { RouterCoreError } from "../src/errors.js";
-import { finalizeRoute, prepareRoute, route, type RouteInput } from "../src/route.js";
+import { conversationPromptGrowth, finalizeRoute, prepareRoute, route, type RouteInput } from "../src/route.js";
+import { DEFAULT_PROMPT_GROWTH_TOKENS_PER_TURN } from "../src/fixed_turn_cost_config.js";
 import type { CandidateModelMetadata } from "../src/compatibility.js";
 import type { ModelPricing } from "../src/cost.js";
 import type { SelectorInput } from "../src/selector_input.js";
@@ -682,4 +683,32 @@ test("equal-depth identity ties prefer strict matches, then recency", () => {
     );
     expect(prepared.conversationId).toBe("conv_loose_twin");
   }
+});
+
+test("projected prompt growth comes from the conversation's own prefix rows", () => {
+  const row = (conversation_id: string, message_depth: number, prompt_tokens: number) => ({
+    hash: `h${message_depth}`,
+    conversation_id,
+    model: MINI,
+    message_depth,
+    prompt_tokens,
+    input_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    tool_choice_fp: "",
+    response_format_fp: "",
+    reason: "turn",
+    updated_at: new Date().toISOString(),
+  });
+  const rows = [
+    row("c-1", 2, 4000),
+    row("c-1", 4, 5500),
+    row("c-1", 6, 7000),
+    row("c-1", 6, 6900),
+    row("c-other", 8, 90_000),
+  ];
+  expect(conversationPromptGrowth(rows, "c-1")).toBe(1500);
+  // Too little history, or no conversation, falls back to the default.
+  expect(conversationPromptGrowth(rows.slice(0, 2), "c-1")).toBe(DEFAULT_PROMPT_GROWTH_TOKENS_PER_TURN);
+  expect(conversationPromptGrowth(rows, null)).toBe(DEFAULT_PROMPT_GROWTH_TOKENS_PER_TURN);
 });

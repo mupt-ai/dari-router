@@ -215,6 +215,9 @@ export function estimateCandidateCosts(args: {
   >;
   cacheScope?: ReasoningCacheScopeLookup;
   modelProvider?: ModelProviderLookup;
+  // Tokens the prompt gains per agent turn: the reply plus the tool results it
+  // triggers. Omitted, the prompt grows by the reply alone.
+  promptGrowthTokensPerTurn?: number;
 }): CandidateCostEstimate[] {
   const cacheScope = args.cacheScope ?? ((model) =>
     reasoningCacheScope(model, args.modelProvider?.(model)));
@@ -337,6 +340,7 @@ export function estimateCandidateCosts(args: {
             reasoningEffort,
             provider,
             outputTokens: args.averageOutputTokensByModel?.[model]?.[reasoningEffort],
+            promptGrowthTokensPerTurn: args.promptGrowthTokensPerTurn ?? 0,
           })
         : null,
     } satisfies CandidateCostEstimate;
@@ -363,6 +367,7 @@ function fixedTurnCostEstimate(args: {
   reasoningEffort: ReasoningEffort;
   provider?: string;
   outputTokens?: number;
+  promptGrowthTokensPerTurn: number;
 }): FixedTurnCostEstimate | null {
   const provider = promptCacheProviderForModel(args.model, args.provider);
   if (args.outputTokens === undefined) return null;
@@ -376,10 +381,13 @@ function fixedTurnCostEstimate(args: {
   const longestHorizon = horizons[horizons.length - 1] ?? 0;
   const projections: TurnCostProjection[] = [];
   const outputTokens = args.outputTokens;
+  // Each turn's prompt carries the previous reply and the tool results it
+  // triggered, so it grows by at least the reply.
+  const growthTokens = Math.max(outputTokens, args.promptGrowthTokensPerTurn);
   let totalCost = 0;
 
   for (let turn = 1; turn <= longestHorizon; turn += 1) {
-    const inputTokens = args.estPromptTokens + (turn - 1) * outputTokens;
+    const inputTokens = args.estPromptTokens + (turn - 1) * growthTokens;
     const price = pricingForPrompt(args.price, inputTokens);
     // Cache modeling refines a projection; it must not gate its existence.
     // Without a known cache policy, assume no reads or writes and charge
@@ -402,9 +410,9 @@ function fixedTurnCostEstimate(args: {
               provider,
               inputTokens,
               // Later requests can only read prefixes that appeared in prior
-              // request inputs. The immediately previous output is fresh on the
-              // next request.
-              reusablePrefix: args.estPromptTokens + (turn - 2) * outputTokens,
+              // request inputs. The previous turn's reply and tool results are
+              // fresh on the next request.
+              reusablePrefix: args.estPromptTokens + (turn - 2) * growthTokens,
               outputTokens,
             });
     if (horizons.includes(turn)) {

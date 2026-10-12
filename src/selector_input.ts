@@ -5,6 +5,8 @@
 import {
   createThinkingLevelRatios,
   resolveRouterEvalScore,
+  resolveRouterEvalTaskCost,
+  createTaskCostRatios,
   type ThinkingLevelRatios,
 } from "./eval_score_imputation.js";
 import {
@@ -64,6 +66,7 @@ type ResolvedEvalScore = {
   notes: string | null;
   imputed?: true;
   source_model_id?: string;
+  cost_per_task_usd?: number;
 };
 
 export type SelectorInput = {
@@ -71,9 +74,6 @@ export type SelectorInput = {
   imported_evals: Array<Record<string, unknown>>;
   previous_decision: SelectorPreviousDecision | null;
   cost_estimates: CandidateCostEstimate[] | null;
-  // Kept outside the compactable conversation so a long agent run never
-  // loses the task the selector is routing.
-  task?: ChatMessage | null;
   // Named candidates remain internal here. The anonymous policy boundary
   // rewrites every entry to the current action permutation.
   lease_history?: SelectorLeaseHistoryEntry[];
@@ -122,7 +122,6 @@ export function buildSelectorInput(args: {
   previousDecision: PreviousDecision | null;
   costEstimates: CandidateCostEstimate[] | null;
   messages: ChatMessage[];
-  task?: ChatMessage | null;
   leaseHistory?: SelectorLeaseHistoryEntry[];
   customRules?: CustomRouterRule[];
   defaultTarget?: {
@@ -157,10 +156,9 @@ export function buildSelectorInput(args: {
         }
       : null,
     cost_estimates: args.costEstimates,
-    // Only callers that computed lease context provide these; omitting the
-    // keys entirely keeps the input byte-identical to the shape before task
-    // and lease history existed, for routers with lease context disabled.
-    ...(args.task !== undefined ? { task: args.task } : {}),
+    // Only callers that computed lease context provide it; omitting the key
+    // entirely keeps the input byte-identical to the shape before lease
+    // history existed, for routers with lease context disabled.
     ...(args.leaseHistory !== undefined ? { lease_history: args.leaseHistory } : {}),
     messages: args.messages,
   };
@@ -197,6 +195,7 @@ function formatImportedEvals(
       ]
     : [];
   const thinkingLevelRatios = createThinkingLevelRatios(ratioEvals);
+  const taskCostRatios = createTaskCostRatios(ratioEvals);
   return evals.flatMap((evalCard) => {
     const scores = matchingEvalScores(
       evalCard.scores,
@@ -205,6 +204,7 @@ function formatImportedEvals(
       evalCard.min_score,
       evalCard.max_score,
       thinkingLevelRatios,
+      taskCostRatios,
     );
     if (scores.length === 0) return [];
     return [
@@ -227,6 +227,7 @@ function matchingEvalScores(
   minScore: number,
   maxScore: number,
   thinkingLevelRatios: ThinkingLevelRatios,
+  taskCostRatios: ThinkingLevelRatios,
 ): Array<Record<string, unknown>> {
   const uniqueCandidates = new Map(
     candidates.map((candidate) => [routingCandidateKey(candidate), candidate]),
@@ -251,6 +252,13 @@ function matchingEvalScores(
         : (modelScores.find(
             (score) => score.thinking_level === candidate.reasoningEffort,
           ) ?? modelScores.find((score) => score.thinking_level == null));
+      const costPerTask = resolveRouterEvalTaskCost({
+        scores,
+        modelId: candidate.model,
+        thinkingLevel: candidate.reasoningEffort,
+        impute: imputeEvalScores,
+        ratios: taskCostRatios,
+      });
       return {
         model_id: candidate.model,
         thinking_level: candidate.reasoningEffort,
@@ -258,6 +266,7 @@ function matchingEvalScores(
         notes: measured?.notes ?? null,
         ...(resolved.imputed ? { imputed: true as const } : {}),
         ...(resolved.sourceModelId ? { source_model_id: resolved.sourceModelId } : {}),
+        ...(costPerTask === null ? {} : { cost_per_task_usd: costPerTask }),
       };
     })
     .filter((score): score is ResolvedEvalScore => score !== null);

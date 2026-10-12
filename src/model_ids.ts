@@ -36,14 +36,20 @@ export function canonicalModelId(modelId: string): string {
 // retain the owner's tokenizer, prompt-cache, and cost family. Warm-prefix
 // provenance is checked separately against the actual serving provider, so
 // an alias here never lets one provider claim another's cached prefix.
-// Returns null when the serving provider is not an alias.
+// Vercel AI Gateway passes the upstream's prompt cache through: OpenAI and
+// Anthropic models keep their owner's family, and open-weight models get
+// automatic prefix caching with no write fee, the fireworks family (95-98% of
+// prompt tokens read from cache in October 2026 GLM 5.3 and Kimi K3 agent
+// runs). Returns null when the serving provider is not an alias.
 function aliasFamilyProvider(model: string, provider: string): string | null {
   if (provider === "openai-codex") return "openai";
-  if (provider !== "amazon-bedrock" && provider !== "azure") return null;
+  const gateway = provider === "vercel-ai-gateway";
+  if (!gateway && provider !== "amazon-bedrock" && provider !== "azure") return null;
   const slash = canonicalModelId(model).indexOf("/");
   if (slash <= 0) return null;
   const owner = canonicalModelId(model).slice(0, slash).toLowerCase();
-  return owner === "openai" || owner === "anthropic" ? owner : null;
+  if (owner === "openai" || owner === "anthropic") return owner;
+  return gateway ? "fireworks" : null;
 }
 
 // The provider whose family behavior (tokenizer, prompt cache, cost class)

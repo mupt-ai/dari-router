@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 
 import {
+  createTaskCostRatios,
   createThinkingLevelRatios,
   resolveRouterEvalScore,
+  resolveRouterEvalTaskCost,
 } from "../src/eval_score_imputation.js";
 import type { RouterEval } from "../src/types.js";
 
@@ -246,4 +248,24 @@ test("rejects estimates beyond a bounded scorecard", () => {
       ratios: createThinkingLevelRatios([target, reference]),
     }),
   ).toBeNull();
+});
+
+test("scales a model's priced level by cost ratios and never borrows a predecessor's cost", () => {
+  const ratios = createTaskCostRatios([
+    evalCard("calibration", [
+      { model_id: "other/model", thinking_level: "low", score: 50, cost_per_task_usd: 0.5 },
+      { model_id: "other/model", thinking_level: "high", score: 60, cost_per_task_usd: 2 },
+    ]),
+  ]);
+  const scores = [
+    { model_id: "zai-org/GLM-5.3", thinking_level: "low" as const, score: 40, cost_per_task_usd: 1 },
+    { model_id: "openai/gpt-6-sol", thinking_level: "high" as const, score: 80, cost_per_task_usd: 2 },
+  ];
+  const common = { scores, impute: true, ratios };
+
+  expect(resolveRouterEvalTaskCost({ ...common, modelId: "zai-org/GLM-5.3", thinkingLevel: "low" })).toBe(1);
+  expect(resolveRouterEvalTaskCost({ ...common, modelId: "zai-org/GLM-5.3", thinkingLevel: "high" })).toBe(4);
+  expect(resolveRouterEvalTaskCost({ ...common, modelId: "openai/gpt-6.1-sol", thinkingLevel: "high" })).toBeNull();
+  expect(resolveRouterEvalTaskCost({ ...common, impute: false, modelId: "zai-org/GLM-5.3", thinkingLevel: "high" }))
+    .toBeNull();
 });

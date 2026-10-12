@@ -88,6 +88,8 @@ export type RouterEvalScore = {
   score: number;
   notes?: string | null;
   thinking_level?: ReasoningEffort | null;
+  // Model API spend in USD for one task of this benchmark, when published.
+  cost_per_task_usd?: number | null;
 };
 
 export type RouterEval = {

@@ -6,11 +6,7 @@ import {
   type SelectorInput,
   type SelectorLeaseHistoryEntry,
 } from "./selector_input.js";
-import {
-  olderMessageChars,
-  trimMessagesFromFront,
-  trimTaskMessage,
-} from "./selector_truncation.js";
+import { olderMessageChars, trimMessagesFromFront } from "./selector_truncation.js";
 import { REASONING_EFFORTS } from "./types.js";
 import type {
   CandidateCostEstimate,
@@ -40,7 +36,6 @@ export type SelectorRequestArgs = {
   } | null;
   selectorModel: string;
   messages: ChatMessage[];
-  task?: ChatMessage | null;
   leaseHistory?: SelectorLeaseHistoryEntry[];
   modelFallbackEnabled?: boolean;
   fallbackRequiresDifferentProvider?: boolean;
@@ -48,19 +43,14 @@ export type SelectorRequestArgs = {
   imputationReferenceEvals?: RouterEval[];
 };
 
-// Builds the selector request, trimming old conversation history first and an
-// oversized retained task only when necessary. The window size is an explicit
-// input (in characters) so the core stays free of model-registry lookups.
+// Builds the selector request, trimming old conversation history first and the
+// latest turn only when necessary. The window size is an explicit input (in
+// characters) so the core stays free of model-registry lookups.
 export function buildSizedSelectorRequest(
   args: SelectorRequestArgs & { contextWindowChars: number },
 ): BuiltSelectorRequest {
   let messages = args.messages;
-  let task = args.task;
-  const taskExceedsWindow =
-    task !== undefined
-    && task !== null
-    && JSON.stringify(task).length > args.contextWindowChars;
-  let built = buildSelectorRequest({ ...args, messages, task });
+  let built = buildSelectorRequest({ ...args, messages });
 
   while (true) {
     const inputChars = selectorRequestInputChars(built.selectorRequest);
@@ -73,7 +63,7 @@ export function buildSizedSelectorRequest(
         messages,
         Math.min(dropChars, removableHistoryChars),
       );
-      const messagesBuilt = buildSelectorRequest({ ...args, messages: trimmedMessages, task });
+      const messagesBuilt = buildSelectorRequest({ ...args, messages: trimmedMessages });
       if (selectorRequestInputChars(messagesBuilt.selectorRequest) < inputChars) {
         messages = trimmedMessages;
         built = messagesBuilt;
@@ -81,40 +71,12 @@ export function buildSizedSelectorRequest(
       }
     }
 
-    // If the retained task cannot fit the whole window by itself, compact it
-    // before touching the latest conversation turn. Smaller tasks keep the
-    // previous behavior: the conversation view shrinks first.
-    if (taskExceedsWindow && task !== undefined && task !== null) {
-      const taskChars = JSON.stringify(task).length;
-      const maxTaskDropChars = Math.max(
-        0,
-        taskChars - Math.floor(args.contextWindowChars / 2),
-      );
-      const trimmedTask = trimTaskMessage(task, Math.min(dropChars, maxTaskDropChars));
-      const taskBuilt = buildSelectorRequest({ ...args, messages, task: trimmedTask });
-      if (selectorRequestInputChars(taskBuilt.selectorRequest) < inputChars) {
-        task = trimmedTask;
-        built = taskBuilt;
-        continue;
-      }
-    }
-
     const trimmedMessages = trimMessagesFromFront(messages, dropChars);
-    const messagesBuilt = buildSelectorRequest({ ...args, messages: trimmedMessages, task });
+    const messagesBuilt = buildSelectorRequest({ ...args, messages: trimmedMessages });
     if (selectorRequestInputChars(messagesBuilt.selectorRequest) < inputChars) {
       messages = trimmedMessages;
       built = messagesBuilt;
       continue;
-    }
-
-    if (task !== undefined && task !== null) {
-      const trimmedTask = trimTaskMessage(task, dropChars);
-      const taskBuilt = buildSelectorRequest({ ...args, messages, task: trimmedTask });
-      if (selectorRequestInputChars(taskBuilt.selectorRequest) < inputChars) {
-        task = trimmedTask;
-        built = taskBuilt;
-        continue;
-      }
     }
 
     throw new RouterCoreError(
@@ -137,7 +99,6 @@ export function buildSelectorRequest(args: SelectorRequestArgs): BuiltSelectorRe
     previousDecision: args.previousDecision ?? null,
     costEstimates: args.costEstimates ?? null,
     messages: args.messages,
-    task: args.task,
     leaseHistory: args.leaseHistory,
     customRules: args.customRules,
     defaultTarget: args.defaultTarget,

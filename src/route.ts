@@ -17,6 +17,10 @@ import { prefixHitMatchesProvider, warmPrefixHits } from "./cache_behavior.js";
 import { reasoningCacheScope, type ReasoningCacheScopeLookup } from "./cache_scope.js";
 import { RouterCoreError } from "./errors.js";
 import {
+  DEFAULT_PROMPT_GROWTH_TOKENS_PER_TURN,
+  MIN_TURNS_FOR_OBSERVED_PROMPT_GROWTH,
+} from "./fixed_turn_cost_config.js";
+import {
   activeLeaseFromHit,
   compatiblePreviousDecision,
   pendingLeaseFromHit,
@@ -173,6 +177,28 @@ export function prepareCandidates(input: CandidatePreparationInput): CandidatePr
   );
 }
 
+// Prompt tokens the conversation gains per recorded turn, from its own prefix
+// rows: replies and tool results both land in the next prompt. Too short a
+// history falls back to the default rate.
+export function conversationPromptGrowth(
+  hits: RouterPrefixHit[] | undefined,
+  conversationId: string | null,
+): number {
+  const promptTokensByDepth = new Map<number, number>();
+  for (const entry of hits ?? []) {
+    if (conversationId === null || entry.conversation_id !== conversationId) continue;
+    const known = promptTokensByDepth.get(entry.message_depth) ?? 0;
+    promptTokensByDepth.set(entry.message_depth, Math.max(known, entry.prompt_tokens));
+  }
+  if (promptTokensByDepth.size < MIN_TURNS_FOR_OBSERVED_PROMPT_GROWTH) {
+    return DEFAULT_PROMPT_GROWTH_TOKENS_PER_TURN;
+  }
+  const ordered = [...promptTokensByDepth].sort(([left], [right]) => left - right);
+  const first = ordered[0]![1];
+  const last = ordered[ordered.length - 1]![1];
+  return Math.max(0, (last - first) / (ordered.length - 1));
+}
+
 function newestConversationHit(
   hits: RouterPrefixHit[] | undefined,
   conversationId: string | undefined,
@@ -324,6 +350,7 @@ function prepareCandidatesWithAccounting(
       averageOutputTokensByModel: input.averageOutputTokensByModel,
       cacheScope,
       modelProvider: (model) => input.metadataLookup(model).provider,
+      promptGrowthTokensPerTurn: conversationPromptGrowth(input.prefixHits, conversationId),
     });
   } catch (error) {
     warnings.push({ phase: "cost_estimation", error });

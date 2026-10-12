@@ -1,14 +1,13 @@
 import { expect, test } from "bun:test";
 
 import type { JsonObject } from "../src/json.js";
-import { ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT } from "../src/prompts.js";
+import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "../src/prompts.js";
 import {
   assignAnonymousActions,
   assignStableAnonymousActions,
   anonymizeSelectorInput,
   buildAnonymousPolicyPrompt,
   parseAnonymousActionSelection,
-  parseAnonymousEvalScoreFormat,
   type Rng,
 } from "../src/anonymous_actions.js";
 
@@ -121,7 +120,6 @@ function selectorInput(): JsonObject {
         fixed_turn_cost_estimate: null,
       },
     ],
-    task: { role: "user", content: "Fix the failing test." },
     lease_history: [
       {
         candidate: { model: MEDIUM, thinking_level: "medium" },
@@ -156,7 +154,7 @@ test("deterministically anonymizes every candidate-bearing selector field", () =
   const anonymous = anonymizeSelectorInput(selectorInput(), slots);
   const prompt = buildAnonymousPolicyPrompt(anonymous, slots);
   const [systemMessage, userMessage] = prompt.messages;
-  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT });
+  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_SYSTEM_PROMPT });
   expect(prompt.actions).toEqual(["A", "B", "C"]);
 
   const serialized = userMessage.content;
@@ -170,7 +168,7 @@ test("deterministically anonymizes every candidate-bearing selector field", () =
   expect(serialized).toContain("## Action B");
   expect(serialized).toContain("## Action C");
   expect(serialized).toContain("<conversation>");
-  expect(serialized).toContain('<task>\n{"role":"user","content":"Fix the failing test."}\n</task>');
+  expect(serialized).not.toContain("<task>");
   expect(serialized).toContain("<lease_1>");
   expect(serialized).toContain(`- Model: Action ${actionFor(slots, MEDIUM)}`);
   expect(serialized).toContain("- Requested Turns: 10");
@@ -179,29 +177,6 @@ test("deterministically anonymizes every candidate-bearing selector field", () =
   expect(serialized).toContain('"status":"passed"');
   expect(serialized).toContain("anonymous candidate");
   expect(serialized).toContain("Fix the failing test.");
-});
-
-test("renders each action as a block of benchmark standing and one projected cost when asked", () => {
-  const slots = assignAnonymousActions(CANDIDATES, rng(42));
-  const anonymous = anonymizeSelectorInput(selectorInput(), slots);
-  const prompt = buildAnonymousPolicyPrompt(anonymous, slots, "standing");
-  const serialized = prompt.messages[1].content;
-
-  expect(serialized).toContain("<benchmarks>\n- SWE-bench: Coding reliability\n</benchmarks>");
-  expect(block(serialized, actionFor(slots, CHEAP))).toEqual([
-    "- Cost: 1 turn $0.006, 10 turns $0.0432, 100 turns $0.55",
-    "- SWE-bench: Rank 3/3, Z -1.30",
-  ]);
-  expect(block(serialized, actionFor(slots, STRONG))).toEqual([
-    "- Cost: 1 turn $0.02, 10 turns $0.191, 100 turns $2.40",
-    "- SWE-bench: Rank 1/3, Z +1.14",
-  ]);
-  // An action with no loop projection simply has no cost line; per-request
-  // rates would be a different unit from every other block.
-  expect(block(serialized, actionFor(slots, MEDIUM))).toEqual([
-    "- SWE-bench: Rank 2/3, Z +0.16",
-  ]);
-  expect(serialized).toContain(`<previous_action>\n${actionFor(slots, MEDIUM)}\n</previous_action>`);
 });
 
 test("renders raw benchmark scores on the benchmark's own scale by default", () => {
@@ -219,16 +194,16 @@ test("renders raw benchmark scores on the benchmark's own scale by default", () 
   const [systemMessage, userMessage] = prompt.messages;
   const serialized = userMessage.content;
 
-  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT });
+  expect(systemMessage).toEqual({ role: "system", content: ANONYMOUS_ACTION_SYSTEM_PROMPT });
   expect(serialized).toContain(
     "<benchmarks>\n- SWE-bench (scale 0–3000, higher is better): Coding reliability\n</benchmarks>",
   );
   expect(block(serialized, actionFor(slots, CHEAP))).toEqual([
-    "- Cost: 1 turn $0.006, 10 turns $0.0432, 100 turns $0.55",
+    "- Cost: $0.00432/turn",
     "- SWE-bench: Score 1210.5",
   ]);
   expect(block(serialized, actionFor(slots, STRONG))).toEqual([
-    "- Cost: 1 turn $0.02, 10 turns $0.191, 100 turns $2.40",
+    "- Cost: $0.0191/turn",
     "- SWE-bench: Score 1450",
   ]);
   expect(block(serialized, actionFor(slots, MEDIUM))).toEqual([
@@ -239,11 +214,41 @@ test("renders raw benchmark scores on the benchmark's own scale by default", () 
   expect(serialized).not.toContain(CHEAP);
   expect(serialized).not.toContain(STRONG);
   expect(serialized).not.toContain(MEDIUM);
+});
 
-  const standing = buildAnonymousPolicyPrompt(anonymous, slots, "standing").messages[1].content;
-  expect(standing).toContain("- SWE-bench: Rank 1/3, Z +1.14");
-  expect(standing).not.toContain("Score ");
-  expect(standing).not.toContain("scale 0–3000");
+test("shows a benchmark's published cost per task beside the action's score", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const input = selectorInput();
+  const scores = (input["imported_evals"] as JsonObject[])[0]!["scores"] as JsonObject[];
+  scores[0]!["cost_per_task_usd"] = 0.0421;
+  scores[1]!["cost_per_task_usd"] = 1.5;
+  const serialized = buildAnonymousPolicyPrompt(anonymizeSelectorInput(input, slots), slots)
+    .messages[1].content;
+
+  expect(serialized).toContain(
+    "- SWE-bench (scale 0–100, higher is better): Coding reliability $/task is the model API spend for one task of this benchmark at that action's setting.",
+  );
+  expect(block(serialized, actionFor(slots, CHEAP))).toContain("- SWE-bench: Score 40, $0.0421/task");
+  expect(block(serialized, actionFor(slots, STRONG))).toContain("- SWE-bench: Score 90, $1.50/task");
+  expect(block(serialized, actionFor(slots, MEDIUM))).toContain("- SWE-bench: Score 70");
+});
+
+test("marks estimated scores and restates the routing job after the conversation", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const input = selectorInput();
+  const scores = (input["imported_evals"] as JsonObject[])[0]!["scores"] as JsonObject[];
+  scores[1]!["imputed"] = true;
+  const serialized = buildAnonymousPolicyPrompt(anonymizeSelectorInput(input, slots), slots)
+    .messages[1].content;
+
+  expect(serialized).toContain(
+    "<benchmarks>\nScores marked (est.) were estimated from the same model's other settings or its predecessor, not measured.\n",
+  );
+  expect(block(serialized, actionFor(slots, STRONG))).toContain("- SWE-bench: Score 90 (est.)");
+  expect(block(serialized, actionFor(slots, CHEAP))).toContain("- SWE-bench: Score 40");
+  expect(serialized.slice(serialized.lastIndexOf("</conversation>"))).toContain(
+    "You are routing, not solving",
+  );
 });
 
 test("anonymized eval cards keep the raw score and scale without model identity", () => {
@@ -268,12 +273,6 @@ test("anonymized eval cards keep the raw score and scale without model identity"
   expect(() => anonymizeSelectorInput(badRange, slots)).toThrow("score range is invalid");
 });
 
-test("parses eval score formats", () => {
-  expect(parseAnonymousEvalScoreFormat("standing", "format")).toBe("standing");
-  expect(parseAnonymousEvalScoreFormat("raw", "format")).toBe("raw");
-  expect(() => parseAnonymousEvalScoreFormat("z", "format")).toThrow("format must be one of standing, raw");
-});
-
 test("omits benchmark sections and cost details it has no data for", () => {
   const slots = assignAnonymousActions(CANDIDATES, rng(42));
   const bare = {
@@ -281,7 +280,6 @@ test("omits benchmark sections and cost details it has no data for", () => {
     imported_evals: [],
     previous_decision: null,
     cost_estimates: null,
-    task: null,
     lease_history: [],
   };
   const prompt = buildAnonymousPolicyPrompt(anonymizeSelectorInput(bare, slots), slots);
@@ -491,6 +489,35 @@ test("rejects malformed action completions", () => {
     "action must be a string",
   );
   expect(() => parseAnonymousActionSelection("[]", slots)).toThrow("must be an object");
+});
+
+test("levels sharing a prompt cache share a letter with a level suffix", () => {
+  const roster = [
+    { model: "m/shared", reasoningEffort: "low" },
+    { model: "m/shared", reasoningEffort: "high" },
+    { model: "m/keyed", reasoningEffort: "low" },
+    { model: "m/keyed", reasoningEffort: "high" },
+  ];
+  const cacheScope = (model: string) => (model === "m/shared" ? "shared" as const : "effort_keyed" as const);
+  const slots = assignAnonymousActions(roster, rng(42), cacheScope);
+  const actionOf = (model: string, effort: string) =>
+    slots.find((slot) => slot.candidate.model === model && slot.candidate.reasoningEffort === effort)!.action;
+
+  const sharedLetter = actionOf("m/shared", "low").split(":")[0];
+  expect(actionOf("m/shared", "low")).toBe(`${sharedLetter}:low`);
+  expect(actionOf("m/shared", "high")).toBe(`${sharedLetter}:high`);
+  expect(actionOf("m/keyed", "low")).toMatch(/^[A-C]$/);
+  expect(actionOf("m/keyed", "high")).toMatch(/^[A-C]$/);
+  expect(new Set(slots.map((slot) => slot.action.split(":")[0])).size).toBe(3);
+
+  const pruned = assignStableAnonymousActions(roster, [roster[1]!, roster[2]!], rng(42), cacheScope);
+  expect(pruned.map((slot) => slot.action).sort()).toEqual(
+    [actionOf("m/shared", "high"), actionOf("m/keyed", "low")].sort(),
+  );
+  expect(parseAnonymousActionSelection(`{"action":"${sharedLetter}:high"}`, slots).candidate).toEqual(roster[1]);
+
+  // Without a cache scope every pair keeps its own bare letter, as before.
+  expect(assignAnonymousActions(roster, rng(42)).map((slot) => slot.action)).toEqual(["A", "B", "C", "D"]);
 });
 
 test("stable letters survive pruning of the active menu", () => {

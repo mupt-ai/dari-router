@@ -55,7 +55,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp -R src/prompts dist/",
     "test:package": "bash scripts/test-package.sh",
     "prepublishOnly": "bun run typecheck && bun test && bun run test:package",
     "typecheck": "tsc --noEmit",

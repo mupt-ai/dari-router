@@ -30,3 +30,13 @@ export const FIXED_TURN_CACHE_HIT_PROBABILITY = {
   // September 16, 2026 native Grok 4.6 probe (low effort, short intervals).
   xai: 0.90,
 } as const;
+
+// Tokens an agent turn adds to the next prompt (its reply plus the tool
+// results it triggered) before a conversation has enough history to measure
+// its own rate. October 2026 Sentry agent runs grew 600-2,000 tokens per turn,
+// two to five times the reply alone.
+export const DEFAULT_PROMPT_GROWTH_TOKENS_PER_TURN = 1000;
+
+// Recorded turns a conversation needs before its own prompt growth replaces
+// the default.
+export const MIN_TURNS_FOR_OBSERVED_PROMPT_GROWTH = 3;

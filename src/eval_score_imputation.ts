@@ -4,6 +4,7 @@ export type EvalScoreForImputation = {
   model_id: string;
   score: number;
   thinking_level?: ReasoningEffort | null;
+  cost_per_task_usd?: number | null;
 };
 
 export type EvalForImputation = {
@@ -109,6 +110,58 @@ export function resolveRouterEvalScore(args: {
   return borrowed === null || borrowed === undefined
     ? null
     : { score: borrowed, imputed: true, sourceModelId: previous };
+}
+
+// Cost-per-task ratios between thinking levels, learned like score ratios. A
+// zero floor makes the shared normalization cancel, leaving raw cost ratios.
+export function createTaskCostRatios(
+  evals: readonly Pick<EvalForImputation, "scores">[],
+): ThinkingLevelRatios {
+  return createThinkingLevelRatios(
+    evals.flatMap((evalCard) => {
+      const priced = evalCard.scores.flatMap((row) => {
+        const cost = row.cost_per_task_usd;
+        return typeof cost === "number" && Number.isFinite(cost) && cost > 0
+          ? [{ ...row, score: cost }]
+          : [];
+      });
+      if (priced.length === 0) return [];
+      return [{ min_score: 0, max_score: Math.max(...priced.map((row) => row.score)), scores: priced }];
+    }),
+  );
+}
+
+// A measured cost wins; otherwise the same model's priced levels are scaled by
+// cost ratios. Predecessors never lend costs: prices change between
+// generations even when scores carry over.
+export function resolveRouterEvalTaskCost(args: {
+  scores: readonly EvalScoreForImputation[];
+  modelId: string;
+  thinkingLevel: ReasoningEffort;
+  impute?: boolean;
+  ratios?: ThinkingLevelRatios;
+}): number | null {
+  const priced = args.scores.filter(
+    (row) =>
+      row.model_id === args.modelId &&
+      typeof row.cost_per_task_usd === "number" &&
+      Number.isFinite(row.cost_per_task_usd) &&
+      row.cost_per_task_usd > 0,
+  );
+  const match = priced.find((row) => row.thinking_level === args.thinkingLevel)
+    ?? priced.find((row) => row.thinking_level == null);
+  if (match) return match.cost_per_task_usd!;
+  if (!(args.impute ?? false)) return null;
+  const estimates = priced.flatMap((anchor) => {
+    if (anchor.thinking_level == null) return [];
+    const ratio = resolveThinkingLevelRatio(
+      args.ratios ?? new Map(),
+      args.thinkingLevel,
+      anchor.thinking_level,
+    );
+    return ratio === undefined ? [] : [anchor.cost_per_task_usd! * ratio];
+  });
+  return estimates.length === 0 ? null : mean(estimates);
 }
 
 function pairwiseRatioScore(

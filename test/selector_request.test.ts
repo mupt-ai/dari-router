@@ -8,17 +8,12 @@ const CANDIDATES: RoutingCandidate[] = [
   { model: "openai/gpt-4.1-mini", reasoningEffort: "medium" },
 ];
 
-function build(
-  messages: ChatMessage[],
-  contextWindowChars: number,
-  task?: ChatMessage,
-) {
+function build(messages: ChatMessage[], contextWindowChars: number) {
   return buildSizedSelectorRequest({
     candidates: CANDIDATES,
     selectorModel: "selector/model",
     contextWindowChars,
     messages,
-    ...(task === undefined ? {} : { task }),
   });
 }
 
@@ -45,43 +40,33 @@ test("oversized conversations trim oldest messages first", () => {
   expect(sent.some((message) => String(message.content).includes("x".repeat(16_000)))).toBe(false);
 });
 
-test("oversized retained tasks compact after older history", () => {
-  const task: ChatMessage = {
-    role: "user",
-    content: `task-start-${"x".repeat(300_000)}-task-end`,
-  };
+test("trimming drops older agent turns before the user's earlier requests", () => {
   const built = build(
-    [task, { role: "user", content: "latest routing signal" }],
-    65_536 * 4,
-    task,
+    [
+      { role: "user", content: "first request: add the billing export" },
+      { role: "assistant", content: "y".repeat(20_000) },
+      { role: "assistant", content: "old reply" },
+      { role: "user", content: "follow-up: also cover refunds" },
+      { role: "assistant", content: "latest agent turn" },
+    ],
+    6_000,
   );
-
-  expect(JSON.stringify(built.selectorRequest.messages).length).toBeLessThanOrEqual(65_536 * 4);
-  expect(String(built.selectorInput.task?.content)).toStartWith("task-start-");
-  expect(String(built.selectorInput.task?.content)).toContain(
-    "...[original task truncated for routing]...",
-  );
-  expect(String(built.selectorInput.task?.content)).toEndWith("-task-end");
-  expect(built.selectorInput.messages.at(-1)?.content).toBe("latest routing signal");
-  expect(JSON.stringify(built.selectorInput.messages)).not.toContain("x".repeat(100));
+  const sent = JSON.stringify(built.selectorInput.messages);
+  expect(JSON.stringify(built.selectorRequest.messages).length).toBeLessThanOrEqual(6_000);
+  expect(sent).toContain("first request: add the billing export");
+  expect(sent).toContain("follow-up: also cover refunds");
+  expect(sent).toContain("latest agent turn");
+  expect(sent).not.toContain("y".repeat(100));
 });
 
-test("oversized first-turn tasks preserve both task edges", () => {
-  const task: ChatMessage = {
-    role: "user",
-    content: `task-start-${"x".repeat(300_000)}-task-end`,
-  };
-  const built = build([task], 65_536 * 4, task);
+test("an oversized single message keeps its tail", () => {
+  const built = build([{ role: "user", content: `start-${"x".repeat(300_000)}-end` }], 65_536 * 4);
 
   expect(JSON.stringify(built.selectorRequest.messages).length).toBeLessThanOrEqual(65_536 * 4);
-  expect(String(built.selectorInput.task?.content)).toStartWith("task-start-");
-  expect(String(built.selectorInput.task?.content)).toContain(
-    "...[original task truncated for routing]...",
-  );
-  expect(String(built.selectorInput.task?.content)).toEndWith("-task-end");
   expect(String(built.selectorInput.messages[0]?.content)).toStartWith(
     "<earlier messages truncated for routing>",
   );
+  expect(String(built.selectorInput.messages[0]?.content)).toEndWith("-end");
 });
 
 test("throws a configuration error when trimming cannot converge", () => {

@@ -8,10 +8,9 @@
 
 import { createHash } from "node:crypto";
 
-import {
-  ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
-  ANONYMOUS_ACTION_SYSTEM_PROMPT,
-} from "./prompts.js";
+import type { ReasoningCacheScopeLookup } from "./cache_scope.js";
+import { FIXED_TURN_COST_COMPARISON_TURNS } from "./fixed_turn_cost_config.js";
+import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "./prompts.js";
 import {
   jsonRecord,
   jsonValue,
@@ -63,6 +62,9 @@ export type AnonymousEvalScore = {
   rank_total: number;
   z_score: number;
   score: number;
+  cost_per_task_usd?: number;
+  // Estimated from the same model's other settings or its predecessor.
+  estimated?: true;
 };
 
 export type AnonymousEvalCard = {
@@ -72,15 +74,6 @@ export type AnonymousEvalCard = {
   max_score: number;
   scores: AnonymousEvalScore[];
 };
-
-export type AnonymousEvalScoreFormat = "standing" | "raw";
-
-export const ANONYMOUS_EVAL_SCORE_FORMATS: readonly AnonymousEvalScoreFormat[] = ["standing", "raw"];
-
-export function parseAnonymousEvalScoreFormat(value: unknown, label: string): AnonymousEvalScoreFormat {
-  if (value === "standing" || value === "raw") return value;
-  throw new Error(`${label} must be one of ${ANONYMOUS_EVAL_SCORE_FORMATS.join(", ")}`);
-}
 
 export type AnonymousActionCost = {
   action: string;
@@ -112,30 +105,40 @@ export type AnonymousSelectorInput = {
   imported_evals: AnonymousEvalCard[];
   previous_action: { action: string } | null;
   cost_estimates: AnonymousActionCost[];
-  task: JsonValue | null;
   lease_history: AnonymousLeaseHistoryEntry[];
   messages: JsonValue;
 };
 
 // Shuffles candidates into spreadsheet-style action slots A..Z, AA..AZ, ...
-// with the injected rng.
+// with the injected rng. Given a cache scope, a model whose thinking levels
+// share one prompt cache gets one letter with a level suffix ("A:high",
+// "A:low"), so the policy sees that changing level keeps the cache warm;
+// effort-keyed levels stay separate letters.
 export function assignAnonymousActions(
   candidates: readonly AnonymousActionCandidate[],
   rng: Rng,
+  cacheScope?: ReasoningCacheScopeLookup,
 ): AnonymousActionSlot[] {
   if (candidates.length < 2) {
     throw new Error(`Anonymous action routing requires at least two candidates, got ${candidates.length}`);
   }
   const keys = new Set<string>();
+  const groups = new Map<string, AnonymousActionCandidate[]>();
   for (const candidate of candidates) {
     const key = candidateKey(candidate.model, candidate.reasoningEffort);
     if (keys.has(key)) throw new Error(`Duplicate anonymous action candidate ${key}`);
     keys.add(key);
+    const groupKey = cacheScope?.(candidate.model) === "shared" ? candidate.model : key;
+    groups.set(groupKey, [...(groups.get(groupKey) ?? []), candidate]);
   }
-  return shuffled(candidates, rng).map((candidate, index) => ({
-    action: actionForIndex(index),
-    candidate,
-  }));
+  return shuffled([...groups.values()], rng).flatMap((group, index) =>
+    group.map((candidate) => ({
+      action: group.length === 1
+        ? actionForIndex(index)
+        : `${actionForIndex(index)}:${candidate.reasoningEffort}`,
+      candidate,
+    })),
+  );
 }
 
 // Assigns letters over the conversation's full candidate roster, then keeps
@@ -147,11 +150,13 @@ export function assignStableAnonymousActions(
   allCandidates: readonly AnonymousActionCandidate[],
   activeCandidates: readonly AnonymousActionCandidate[],
   rng: Rng,
+  cacheScope?: ReasoningCacheScopeLookup,
 ): AnonymousActionSlot[] {
-  const slots = assignAnonymousActions(allCandidates, rng);
+  const slots = assignAnonymousActions(allCandidates, rng, cacheScope);
   const byKey = new Map(
     slots.map((slot) => [candidateKey(slot.candidate.model, slot.candidate.reasoningEffort), slot]),
   );
+  const rosterOrder = new Map(slots.map((slot, index) => [slot, index]));
   const active = activeCandidates.map((candidate) => {
     const slot = byKey.get(candidateKey(candidate.model, candidate.reasoningEffort));
     if (slot === undefined) {
@@ -168,11 +173,7 @@ export function assignStableAnonymousActions(
   }
   // Menu order follows the roster's letter order, matching the single-roster
   // behavior where slots come back in assignment order.
-  return active.sort((left, right) =>
-    left.action.length === right.action.length
-      ? left.action.localeCompare(right.action)
-      : left.action.length - right.action.length,
-  );
+  return active.sort((left, right) => rosterOrder.get(left)! - rosterOrder.get(right)!);
 }
 
 function actionForIndex(index: number): string {
@@ -203,9 +204,6 @@ export function anonymizeSelectorInput(
     imported_evals: anonymizeEvals(input["imported_evals"], byCandidate),
     previous_action: anonymizePreviousDecision(input["previous_decision"], byCandidate),
     cost_estimates: anonymizeCosts(input["cost_estimates"], byCandidate),
-    task: input["task"] === null || input["task"] === undefined
-      ? null
-      : jsonValue(input["task"], "selector input task"),
     lease_history: anonymizeLeaseHistory(input["lease_history"], byCandidate),
     messages: jsonValue(input["messages"], "selector input messages"),
   };
@@ -214,23 +212,22 @@ export function anonymizeSelectorInput(
 export function buildAnonymousPolicyPrompt(
   anonymousSelectorInput: AnonymousSelectorInput,
   slots: readonly AnonymousActionSlot[],
-  evalScoreFormat: AnonymousEvalScoreFormat = "raw",
 ): AnonymousPolicyPrompt {
-  const format = evalScoreFormat === "standing" ? "standing" : "raw";
   return {
     messages: [
-      {
-        role: "system",
-        content:
-          format === "standing"
-            ? ANONYMOUS_ACTION_SYSTEM_PROMPT
-            : ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
-      },
-      { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput, format) },
+      { role: "system", content: ANONYMOUS_ACTION_SYSTEM_PROMPT },
+      { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput) },
     ],
     actions: slots.map((slot) => slot.action),
   };
 }
+
+// The conversation is the coding agent's own transcript, and a long one ends
+// the prompt far from the system prompt, so the policy can drift into doing
+// the agent's task. The job is restated after it.
+const ROUTING_REMINDER =
+  "You are routing, not solving: the conversation above is evidence about the coding agent's progress. " +
+  "Pick the action and lease length for the agent's next turns, and answer only with the JSON.";
 
 // Renders the anonymous selector input as sectioned text rather than raw JSON.
 // One block per action carries that action's benchmark evidence and its
@@ -240,28 +237,29 @@ export function buildAnonymousPolicyPrompt(
 // keeping this message pure data. The conversation goes last: it is the only
 // section that grows turn over turn, so keeping it at the end preserves the
 // shared prefix.
-export function formatAnonymousPolicyInput(
-  input: AnonymousSelectorInput,
-  evalScoreFormat: AnonymousEvalScoreFormat = "raw",
-): string {
+export function formatAnonymousPolicyInput(input: AnonymousSelectorInput): string {
   assertValidBenchmarkStandings(input.imported_evals);
   const sections = [
     ...(input.imported_evals.length > 0
       ? [section(
           "benchmarks",
-          input.imported_evals.map((card) => glossaryLine(card, evalScoreFormat)).join("\n"),
+          [
+            ...(input.imported_evals.some((card) => card.scores.some((score) => score.estimated))
+              ? ["Scores marked (est.) were estimated from the same model's other settings or its predecessor, not measured."]
+              : []),
+            ...input.imported_evals.map((card) => glossaryLine(card)),
+          ].join("\n"),
         )]
       : []),
     section(
       "candidates",
       input.candidate_actions
-        .map((candidate) => candidateBlock(candidate.action, input, evalScoreFormat))
+        .map((candidate) => candidateBlock(candidate.action, input))
         .join("\n\n"),
     ),
     ...(input.previous_action === null
       ? []
       : [section("previous_action", input.previous_action.action)]),
-    ...(input.task === null ? [] : [section("task", JSON.stringify(input.task))]),
     ...(input.lease_history.length === 0
       ? []
       : [section(
@@ -269,6 +267,7 @@ export function formatAnonymousPolicyInput(
           input.lease_history.map((entry, index) => leaseBlock(entry, index)).join("\n\n"),
         )]),
     section("conversation", JSON.stringify(input.messages)),
+    ROUTING_REMINDER,
   ];
   return sections.join("\n\n");
 }
@@ -299,21 +298,18 @@ function section(name: string, body: string): string {
   return `<${name}>\n${body}\n</${name}>`;
 }
 
-function candidateBlock(
-  action: string,
-  input: AnonymousSelectorInput,
-  evalScoreFormat: AnonymousEvalScoreFormat,
-): string {
+function candidateBlock(action: string, input: AnonymousSelectorInput): string {
   const cost = input.cost_estimates.find((entry) => entry.action === action);
   const lines = [`## Action ${action}`];
   if (cost !== undefined) lines.push(costLine(cost));
   for (const card of input.imported_evals) {
     const score = card.scores.find((entry) => entry.action === action);
     if (score !== undefined) {
+      const line = `- ${card.name}: Score ${rawScore(score.score)}${score.estimated ? " (est.)" : ""}`;
       lines.push(
-        evalScoreFormat === "standing"
-          ? `- ${card.name}: Rank ${score.rank}/${score.rank_total}, Z ${signed(score.z_score)}`
-          : `- ${card.name}: Score ${rawScore(score.score)}`,
+        score.cost_per_task_usd === undefined
+          ? line
+          : `${line}, ${usd(score.cost_per_task_usd)}/task`,
       );
     }
   }
@@ -325,17 +321,13 @@ function rawScore(value: number): string {
   return value.toFixed(2).replace(/\.?0+$/, "");
 }
 
-// One line, one unit, the same horizons for every action.
+// One number per action: the average spend per turn over the comparison
+// horizon, so a cold start on switching is spread over the turns it serves.
 function costLine(cost: AnonymousActionCost): string {
-  const horizons = cost.projections.map(
-    (projection) =>
-      `${projection.projected_turns} turn${projection.projected_turns === 1 ? "" : "s"} ${usd(projection.total_cost_usd)}`,
-  );
-  return `- Cost: ${horizons.join(", ")}`;
-}
-
-function signed(value: number): string {
-  return value >= 0 ? `+${value.toFixed(2)}` : value.toFixed(2);
+  const projection =
+    cost.projections.find((entry) => entry.projected_turns === FIXED_TURN_COST_COMPARISON_TURNS) ??
+    cost.projections[cost.projections.length - 1]!;
+  return `- Cost: ${usd(projection.total_cost_usd / projection.projected_turns)}/turn`;
 }
 
 function usd(value: number): string {
@@ -344,13 +336,14 @@ function usd(value: number): string {
   return `$${trimmed}`;
 }
 
-function glossaryLine(card: AnonymousEvalCard, evalScoreFormat: AnonymousEvalScoreFormat): string {
-  const scale = evalScoreFormat === "standing"
-    ? ""
-    : ` (scale ${rawScore(card.min_score)}–${rawScore(card.max_score)}, higher is better)`;
-  return card.description === null
+function glossaryLine(card: AnonymousEvalCard): string {
+  const scale = ` (scale ${rawScore(card.min_score)}–${rawScore(card.max_score)}, higher is better)`;
+  const line = card.description === null
     ? `- ${card.name}${scale}`
     : `- ${card.name}${scale}: ${card.description}`;
+  return card.scores.some((score) => score.cost_per_task_usd !== undefined)
+    ? `${line} $/task is the model API spend for one task of this benchmark at that action's setting.`
+    : line;
 }
 
 function assertValidBenchmarkStandings(cards: readonly AnonymousEvalCard[]): void {
@@ -525,6 +518,14 @@ function anonymizeEvals(
       if (rawScore < minScore || rawScore > maxScore) {
         throw new Error(`${label}.score must be between ${minScore} and ${maxScore}`);
       }
+      const costPerTask = score["cost_per_task_usd"];
+      if (costPerTask !== undefined && (typeof costPerTask !== "number" || !(costPerTask > 0))) {
+        throw new Error(`${label}.cost_per_task_usd must be a positive number`);
+      }
+      const imputed = score["imputed"];
+      if (imputed !== undefined && imputed !== true) {
+        throw new Error(`${label}.imputed must be true when present`);
+      }
       return {
         action: actionForCandidate(
           byCandidate,
@@ -535,6 +536,8 @@ function anonymizeEvals(
         rank_total: rankTotal,
         z_score: requiredNumber(score["z_score"], `${label}.z_score`),
         score: rawScore,
+        ...(costPerTask === undefined ? {} : { cost_per_task_usd: costPerTask }),
+        ...(imputed === true ? { estimated: true as const } : {}),
       };
     });
     return {

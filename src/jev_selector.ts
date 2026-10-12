@@ -184,7 +184,6 @@ export function buildJevSelectorRequest(
   }
 
   const state: Record<string, JsonValue> = {
-    task: anonymousInput.task,
     previous_action: anonymousInput.previous_action === null
       ? null
       : anonymousInput.previous_action.action,
@@ -207,7 +206,7 @@ export function buildJevSelectorRequest(
         question: "Which action should serve the coding agent's next turns?",
         rules: [
           "Capability first: the action must be able to handle the task; capability is never traded away for cost.",
-          "Judge the task's difficulty and how much work remains from `task`, `lease_history`, and the latest turns of `conversation`.",
+          "Judge the task's difficulty and how much work remains from the user's messages in `conversation`, `lease_history`, and the latest agent turns.",
           "Use each action's benchmark scores and ranks as evidence of capability. A missing benchmark means the action was not measured on it, not that it scored poorly.",
           "When several actions are capable enough, choose the one with the best (lowest-numbered) cost rank.",
           "Prefer `previous_action` while the task and its current phase have not changed.",

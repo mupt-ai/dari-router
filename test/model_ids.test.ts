@@ -48,6 +48,12 @@ test("family provider follows serving aliases to the canonical owner", () => {
   );
   expect(modelFamilyProvider("prox-azure/gpt-5.6-sol", "azure")).toBe("azure");
   expect(modelFamilyProvider("openai/gpt-5.6-sol", "openrouter")).toBe("openrouter");
+  // Vercel AI Gateway passes the upstream cache through; open-weight models
+  // get the automatic prefix cache of the fireworks family.
+  expect(modelFamilyProvider("anthropic/claude-opus-5-5", "vercel-ai-gateway")).toBe("anthropic");
+  expect(modelFamilyProvider("openai/gpt-6.1-sol", "vercel-ai-gateway")).toBe("openai");
+  expect(modelFamilyProvider("zai-org/GLM-5.3", "vercel-ai-gateway")).toBe("fireworks");
+  expect(modelFamilyProvider("moonshotai/Kimi-K3", "vercel-ai-gateway")).toBe("fireworks");
   // Without an explicit provider the id's prefix decides, and unparseable ids
   // are errors rather than silently generic models.
   expect(modelFamilyProvider("anthropic/claude-sonnet-5")).toBe("anthropic");

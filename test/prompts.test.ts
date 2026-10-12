@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 
 import {
-  ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT,
   ANONYMOUS_ACTION_SYSTEM_PROMPT,
   CUSTOM_SELECTOR_SYSTEM_PROMPT,
   SELECTOR_SYSTEM_PROMPT,
@@ -21,25 +20,11 @@ test("selector prompts define benchmark standing over scored candidate actions",
 
   expect(SELECTOR_SYSTEM_PROMPT).toContain(namedGuidance);
   expect(CUSTOM_SELECTOR_SYSTEM_PROMPT).toContain(namedGuidance);
-  expect(ANONYMOUS_ACTION_SYSTEM_PROMPT).toContain(
-    "Rank is the action's position among the scored candidate actions on that benchmark, 1 being best.",
-  );
 });
 
-test("raw score anonymous prompt explains native benchmark scales instead of standing", () => {
-  expect(ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT).toContain(
-    "Score is the action's value on that benchmark's own scale",
-  );
-  expect(ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT).not.toContain("Rank is");
-  expect(ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT).not.toContain("Z is");
-  // Everything but the scorecard reading instructions is shared.
-  const shared = (prompt: string) =>
-    prompt.split("\n").filter((line) => !/benchmark (standing|scores)|^Rank is|^Score is/.test(line));
-  expect(shared(ANONYMOUS_ACTION_RAW_SCORE_SYSTEM_PROMPT)).toEqual(shared(ANONYMOUS_ACTION_SYSTEM_PROMPT));
-});
-
-test("anonymous action prompt explains missing benchmark scores for actions", () => {
-  expect(ANONYMOUS_ACTION_SYSTEM_PROMPT).toContain(
-    "A missing benchmark score means that action was not evaluated on that benchmark; do not treat it as zero, failure, or negative evidence.",
-  );
+test("anonymous action prompt reads raw benchmark scores and missing ones", () => {
+  expect(ANONYMOUS_ACTION_SYSTEM_PROMPT).toContain("Action blocks show raw benchmark scores");
+  expect(ANONYMOUS_ACTION_SYSTEM_PROMPT).toContain("Missing scores mean unmeasured, NOT zero or failure.");
+  expect(ANONYMOUS_ACTION_SYSTEM_PROMPT).not.toContain("Rank is");
+  expect(ANONYMOUS_ACTION_SYSTEM_PROMPT).not.toContain("{{");
 });

@@ -105,7 +105,6 @@ function selectorInput(overrides: Partial<SelectorInput> = {}): SelectorInput {
       { role: "user", content: "Fix the failing auth tests." },
       { role: "assistant", content: "Running the suite." },
     ],
-    task: { role: "user", content: "Fix the failing auth tests." },
     leaseHistory: [
       {
         candidate: { model: SONNET, thinking_level: "medium" },
@@ -182,7 +181,8 @@ test("renders the anonymized input as a Jev state with action and lease choices"
 
   expect(request.model).toBe("jev-latest");
   const state = request.state as Record<string, unknown>;
-  expect(state.task).toEqual({ role: "user", content: "Fix the failing auth tests." });
+  expect(state).not.toHaveProperty("task");
+  expect(JSON.stringify(state.conversation)).toContain("Fix the failing auth tests.");
   expect(state.previous_action).toBe(actionFor({ model: SONNET, reasoningEffort: "medium" }));
   expect(state.lease_history).toEqual([
     expect.objectContaining({

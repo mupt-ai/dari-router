@@ -996,3 +996,47 @@ test("every selector lease length is a priced cost horizon", () => {
     expect(FIXED_TURN_COST_PROJECTED_TURNS).toContain(turns);
   }
 });
+
+function growthProjection(provider: string, promptGrowthTokensPerTurn?: number) {
+  const model = "zai-org/GLM-5.2";
+  const candidate = { model, reasoningEffort: "high" as const };
+  const [estimate] = estimateCandidateCosts({
+    candidates: [candidate],
+    hits: { perModel: new Map(), perModelBuckets: new Map() },
+    incomingProviderBlockCountFor: () => 1,
+    promptEstimatesByCandidate: new Map([[routingCandidateKey(candidate), {
+      chars: 40_000,
+      reusesStoredPromptTokens: false,
+    }]]),
+    toolChoiceFp: TOOL_FP,
+    responseFormatFp: FORMAT_FP,
+    pricing,
+    averageOutputTokensByModel: { [model]: { high: 200 } },
+    modelProvider: () => provider,
+    ...(promptGrowthTokensPerTurn === undefined ? {} : { promptGrowthTokensPerTurn }),
+  });
+  return (turns: number) => turnCostUsdAt(estimate.fixed_turn_cost_estimate, turns)!;
+}
+
+test("tool results the agent adds each turn grow the projected prompt beyond the reply", () => {
+  const replyOnly = growthProjection("fireworks");
+  const withToolResults = growthProjection("fireworks", 1000);
+  for (const turns of FIXED_TURN_COST_PROJECTED_TURNS) {
+    expect(withToolResults(turns)).toBeGreaterThan(replyOnly(turns));
+  }
+  // Growth never falls below the reply itself, which always lands in the next prompt.
+  const belowReply = growthProjection("fireworks", 50);
+  for (const turns of FIXED_TURN_COST_PROJECTED_TURNS) {
+    expect(belowReply(turns)).toBeCloseTo(replyOnly(turns), 12);
+  }
+});
+
+test("open-weight models behind Vercel AI Gateway are priced with prompt caching", () => {
+  const gateway = growthProjection("vercel-ai-gateway", 1000);
+  const fireworks = growthProjection("fireworks", 1000);
+  const uncached = growthProjection("custom-provider", 1000);
+  for (const turns of FIXED_TURN_COST_PROJECTED_TURNS) {
+    expect(gateway(turns)).toBeCloseTo(fireworks(turns), 12);
+    expect(gateway(turns)).toBeLessThan(uncached(turns));
+  }
+});
