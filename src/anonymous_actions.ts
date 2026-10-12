@@ -222,6 +222,19 @@ export function buildAnonymousPolicyPrompt(
   };
 }
 
+// The answer format a lease-trained policy learned, stating its lease menu: a
+// contiguous range as "any whole number from a to b", otherwise the values.
+// Training appends it to the system prompt, so serving must too.
+export function leaseAnswerInstruction(leaseTurns: readonly number[]): string {
+  if (leaseTurns.length === 0) throw new Error("A lease answer instruction requires lease turn options");
+  const sorted = [...leaseTurns].sort((left, right) => left - right);
+  const contiguous = sorted.every((turns, index) => index === 0 || turns === sorted[index - 1]! + 1);
+  const menu = contiguous
+    ? `any whole number from ${sorted[0]} to ${sorted[sorted.length - 1]}`
+    : `one of ${sorted.join(", ")}`;
+  return `Answer with {"action": <action>, "turns": <lease length>}, where action is written exactly as in its "## Action" heading and turns is ${menu}.`;
+}
+
 // The conversation is the coding agent's own transcript, and a long one ends
 // the prompt far from the system prompt, so the policy can drift into doing
 // the agent's task. The job is restated after it.

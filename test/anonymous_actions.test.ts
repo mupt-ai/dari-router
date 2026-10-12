@@ -7,6 +7,7 @@ import {
   assignStableAnonymousActions,
   anonymizeSelectorInput,
   buildAnonymousPolicyPrompt,
+  leaseAnswerInstruction,
   parseAnonymousActionSelection,
   type Rng,
 } from "../src/anonymous_actions.js";
@@ -545,4 +546,13 @@ test("stable letters survive pruning of the active menu", () => {
   expect(() =>
     assignStableAnonymousActions(roster, [roster[0]!], rng),
   ).toThrow(/at least two active candidates/);
+});
+
+test("states the lease menu as a range when contiguous and as values otherwise", () => {
+  const range = Array.from({ length: 196 }, (_, index) => index + 5);
+  expect(leaseAnswerInstruction(range)).toBe(
+    'Answer with {"action": <action>, "turns": <lease length>}, where action is written exactly as in its "## Action" heading and turns is any whole number from 5 to 200.',
+  );
+  expect(leaseAnswerInstruction([30, 5, 10])).toEndWith("turns is one of 5, 10, 30.");
+  expect(() => leaseAnswerInstruction([])).toThrow("requires lease turn options");
 });
