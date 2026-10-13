@@ -39,7 +39,7 @@ import {
   VERTEX_MODEL,
 } from "./pi_runtime.fixtures.js";
 
-test("piOptions rejects options the fork hard-throws for, per API", async () => {
+test("piOptions rejects controls the provider cannot represent", async () => {
   const gated: Array<[Model<Api>, Partial<RouterRequest>]> = [
     [OPENAI_MODEL, { generation: { stop: ["END"] } }],
     [AZURE_MODEL, { generation: { stop: "END" } }],
@@ -47,6 +47,7 @@ test("piOptions rejects options the fork hard-throws for, per API", async () => 
     [GOOGLE_MODEL, { toolChoice: { type: "tool", name: "lookup" } }],
     [VERTEX_MODEL, { toolChoice: { type: "tool", name: "lookup" } }],
     [BEDROCK_MODEL, { responseFormat: { type: "json_object" } }],
+    [BEDROCK_MODEL, { toolChoice: "none" }],
   ];
   for (const [model, overrides] of gated) {
     expect(
@@ -65,7 +66,7 @@ test("piOptions rejects options the fork hard-throws for, per API", async () => 
     piExecution(routerRequest({ generation: { stop: ["END"], topP: 0.5 } }), COMPLETIONS_MODEL),
     COMPLETIONS_MODEL,
   );
-  expect(stopOptions).toMatchObject({ stop: ["END"], topP: 0.5 });
+  expect(await stopOptions.onPayload?.({}, COMPLETIONS_MODEL)).toMatchObject({ stop: ["END"], top_p: 0.5 });
 });
 
 test("Bedrock reasoning is delegated to Pi options", async () => {
@@ -104,17 +105,15 @@ test("unsupported Pi options surface as 400s through the router", async () => {
   });
 });
 
-test("json_object degrades to a permissive schema on anthropic without payload patching", async () => {
+test("json_object degrades to a permissive schema in the Anthropic payload", async () => {
   const options = await piOptions(
     { apiKey: "test-key" },
     piExecution(routerRequest({ responseFormat: { type: "json_object" } }), ANTHROPIC_MODEL),
     ANTHROPIC_MODEL,
   );
-  expect(options.responseFormat).toEqual({
-    type: "json_schema",
-    jsonSchema: { name: "response", schema: { type: "object" } },
+  expect(await options.onPayload?.({}, ANTHROPIC_MODEL)).toEqual({
+    output_config: { format: { type: "json_schema", schema: { type: "object" } } },
   });
-  expect(options.onPayload).toBeUndefined();
 
   const schemaOptions = await piOptions(
     { apiKey: "test-key" },
@@ -126,11 +125,95 @@ test("json_object degrades to a permissive schema on anthropic without payload p
     ),
     ANTHROPIC_MODEL,
   );
-  expect(schemaOptions.responseFormat).toEqual({
-    type: "json_schema",
-    jsonSchema: { name: "answer", schema: { type: "object" } },
+  expect(await schemaOptions.onPayload?.({}, ANTHROPIC_MODEL)).toEqual({
+    output_config: { format: { type: "json_schema", schema: { type: "object" } } },
   });
-  expect(schemaOptions.onPayload).toBeUndefined();
+});
+
+test("text response format does not constrain Anthropic, Google, or Bedrock to JSON", async () => {
+  for (const model of [ANTHROPIC_MODEL, GOOGLE_MODEL, VERTEX_MODEL, BEDROCK_MODEL]) {
+    const request = routerRequest({ responseFormat: { type: "text" } });
+    const options = await piOptions({ apiKey: "test-key" }, piExecution(request, model), model);
+    const payload = { model: model.id, config: { temperature: 0.3 } };
+    expect(await options.onPayload?.(payload, model)).toEqual(payload);
+  }
+  for (const model of [OPENAI_MODEL, AZURE_MODEL, COMPLETIONS_MODEL]) {
+    const request = routerRequest({ responseFormat: { type: "text" } });
+    const options = await piOptions({ apiKey: "test-key" }, piExecution(request, model), model);
+    expect(await options.onPayload?.({}, model)).toEqual(model === COMPLETIONS_MODEL
+      ? { response_format: { type: "text" } }
+      : { text: { format: { type: "text" } } });
+  }
+});
+
+test("tool-less turns omit tool_choice even when auto or none is requested", async () => {
+  for (const model of [OPENAI_MODEL, AZURE_MODEL, COMPLETIONS_MODEL]) {
+    for (const choice of ["auto", "none"] as const) {
+      const request = routerRequest({ toolChoice: choice });
+      const options = await piOptions({ apiKey: "test-key" }, piExecution(request, model), model);
+      for (const tools of [undefined, []]) {
+        const payload = { model: model.id, ...(tools === undefined ? {} : { tools }) };
+        expect(await options.onPayload?.(payload, model)).toEqual(payload);
+        expect(await options.onPayload?.({ ...payload, tool_choice: choice }, model)).toEqual(payload);
+      }
+      const payload = { tools: [{ type: "function", name: "lookup" }] };
+      expect(await options.onPayload?.(payload, model)).toEqual({ ...payload, tool_choice: choice });
+    }
+  }
+
+  const request = routerRequest({ toolChoice: "auto", parallelToolCalls: false });
+  const options = await piOptions({ apiKey: "test-key" }, piExecution(request, ANTHROPIC_MODEL), ANTHROPIC_MODEL);
+  expect(await options.onPayload?.({ tools: [] }, ANTHROPIC_MODEL)).toEqual({ tools: [] });
+});
+
+test("tool selection and JSON formats serialize to provider-native payloads", async () => {
+  const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+  const cases = [
+    [OPENAI_MODEL, {
+      tool_choice: { type: "function", name: "lookup" },
+      text: { format: { type: "json_schema", name: "answer", schema } },
+    }],
+    [COMPLETIONS_MODEL, {
+      tool_choice: { type: "function", function: { name: "lookup" } },
+      response_format: { type: "json_schema", json_schema: { name: "answer", schema } },
+    }],
+    [ANTHROPIC_MODEL, {
+      tool_choice: { type: "tool", name: "lookup" },
+      output_config: { effort: "high", format: { type: "json_schema", schema } },
+    }],
+    [BEDROCK_MODEL, {
+      toolConfig: { tools: ["existing"], toolChoice: { tool: { name: "lookup" } } },
+      outputConfig: {
+        textFormat: {
+          type: "json_schema",
+          structure: { jsonSchema: { name: "answer", schema: JSON.stringify(schema) } },
+        },
+      },
+    }],
+  ] as const;
+  for (const [model, expected] of cases) {
+    const request = routerRequest({ toolChoice: { type: "tool", name: "lookup" }, responseFormat: { type: "json_schema", name: "answer", schema } });
+    const options = await piOptions({ apiKey: "test-key" }, piExecution(request, model), model);
+    expect(await options.onPayload?.({
+      tools: [{ type: "function", name: "lookup" }],
+      toolConfig: { tools: ["existing"] },
+      output_config: { effort: "high" },
+    }, model)).toMatchObject(expected);
+  }
+  for (const model of [GOOGLE_MODEL, VERTEX_MODEL]) {
+    const request = routerRequest({ toolChoice: "required", generation: { topP: 0.5, stop: ["END"] }, responseFormat: { type: "json_schema", name: "answer", schema } });
+    const options = await piOptions({ apiKey: "test-key" }, piExecution(request, model), model);
+    expect(await options.onPayload?.({ config: { temperature: 0.3 } }, model)).toMatchObject({
+      config: {
+        temperature: 0.3,
+        topP: 0.5,
+        stopSequences: ["END"],
+        responseMimeType: "application/json",
+        responseJsonSchema: schema,
+        toolConfig: { functionCallingConfig: { mode: "ANY" } },
+      },
+    });
+  }
 });
 
 test("started-but-unended thinking blocks reconcile from the terminal message", async () => {

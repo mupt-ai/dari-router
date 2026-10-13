@@ -137,13 +137,9 @@ test("Pi runtime executes a declared model end to end without a custom executor"
     maxRetries: 0,
     reasoning: "high",
     sessionId: "conversation-1",
-    responseFormat: {
-      type: "json_schema",
-      jsonSchema: { name: "answer", schema: { type: "object" }, strict: true },
-    },
   });
   // No fork API other than anthropic-messages reads metadata, so none is
-  // forwarded here; responseFormat maps natively instead of via onPayload.
+  // forwarded here; response formats are translated in onPayload.
   expect(streamOptions?.metadata).toBeUndefined();
   expect(patchedPayload).toEqual({
     input: [{
@@ -152,7 +148,7 @@ test("Pi runtime executes a declared model end to end without a custom executor"
       detail: "low",
     }],
     tools: [{ name: "lookup", strict: true }],
-    text: {},
+    text: { format: { type: "json_schema", name: "answer", schema: { type: "object" }, strict: true } },
     parallel_tool_calls: false,
   });
   expect(credentials).toEqual([{

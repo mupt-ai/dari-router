@@ -48,11 +48,9 @@ export async function piOptions(
     ...(request.generation.temperature === undefined
       ? {}
       : { temperature: request.generation.temperature }),
-    ...(request.generation.topP === undefined ? {} : { topP: request.generation.topP }),
     ...(request.generation.maxOutputTokens === undefined
       ? {}
       : { maxTokens: request.generation.maxOutputTokens }),
-    ...(request.generation.stop === undefined ? {} : { stop: request.generation.stop }),
     ...(request.cacheKey === undefined ? {} : { sessionId: request.cacheKey }),
     // Only anthropic-messages reads metadata (and only user_id); no other
     // fork API consumes metadata fields.
@@ -60,10 +58,6 @@ export async function piOptions(
       ? { metadata: { user_id: request.user } }
       : {}),
     ...(execution.reasoningEffort === "off" ? {} : { reasoning: execution.reasoningEffort }),
-    ...(request.responseFormat === undefined
-      ? {}
-      : { responseFormat: piResponseFormat(request.responseFormat, model.api) }),
-    ...(request.toolChoice === undefined ? {} : { toolChoice: piToolChoice(request.toolChoice) }),
   };
 
   const budget = request.reasoning?.budgetTokens;
@@ -81,8 +75,7 @@ export async function piOptions(
   return options;
 }
 
-// The fork hard-throws for these (api, option) pairs inside streamSimple;
-// reject them up front as client errors instead of surfacing 502s.
+// Reject controls the provider API cannot represent before starting a request.
 function rejectUnsupportedOptions(request: RouterRequest, model: PiModel): void {
   if (request.generation.stop !== undefined && isOpenAIResponsesApi(model.api)) {
     throw unsupportedPiOption("stop sequences", model.api);
@@ -95,6 +88,9 @@ function rejectUnsupportedOptions(request: RouterRequest, model: PiModel): void 
     (model.api === "google-generative-ai" || model.api === "google-vertex")
   ) {
     throw unsupportedPiOption("forcing a specific tool with tool_choice", model.api);
+  }
+  if (request.toolChoice === "none" && model.api === "bedrock-converse-stream") {
+    throw unsupportedPiOption("disabling tools with tool_choice", model.api);
   }
   if (request.responseFormat?.type === "json_object" && model.api === "bedrock-converse-stream") {
     throw unsupportedPiOption("response_format json_object", model.api);
@@ -112,31 +108,31 @@ function unsupportedPiOption(option: string, api: string): RouterFrameworkError 
 function piResponseFormat(
   format: NonNullable<RouterRequest["responseFormat"]>,
   api: string,
-): NonNullable<SimpleStreamOptions["responseFormat"]> {
-  if (format.type === "json_object" && api === "anthropic-messages") {
-    // Anthropic has no json_object mode; degrade to a permissive object
-    // schema so the request still produces JSON output.
+): Record<string, unknown> {
+  if (api === "anthropic-messages") {
+    // Anthropic has no json_object mode; use a permissive object schema.
     return {
       type: "json_schema",
-      jsonSchema: { name: "response", schema: { type: "object" } },
+      schema: format.type === "json_schema" ? format.schema : { type: "object" },
     };
   }
   if (format.type !== "json_schema") return format;
-  return {
-    type: "json_schema",
-    jsonSchema: {
-      name: format.name,
-      schema: format.schema,
-      ...(format.description === undefined ? {} : { description: format.description }),
-      ...(format.strict === undefined ? {} : { strict: format.strict }),
-    },
-  };
+  const { type: _, ...schema } = format;
+  return isOpenAIResponsesApi(api)
+    ? { type: "json_schema", ...schema }
+    : { type: "json_schema", json_schema: schema };
 }
 
-function piToolChoice(choice: RouterToolChoice): NonNullable<SimpleStreamOptions["toolChoice"]> {
-  if (choice === "required") return "any";
+function piToolChoice(choice: RouterToolChoice, api: string): unknown {
+  if (api === "anthropic-messages") {
+    return typeof choice === "string"
+      ? { type: choice === "required" ? "any" : choice }
+      : { type: "tool", name: choice.name };
+  }
   if (typeof choice === "string") return choice;
-  return { type: "function", function: { name: choice.name } };
+  return isOpenAIResponsesApi(api)
+    ? { type: "function", name: choice.name }
+    : { type: "function", function: { name: choice.name } };
 }
 
 function payloadPatch(
@@ -167,7 +163,11 @@ function payloadPatch(
     !strictTools &&
     parallel === undefined &&
     !thinkingPatch &&
-    !imageDetailPatch
+    !imageDetailPatch &&
+    request.responseFormat === undefined &&
+    request.toolChoice === undefined &&
+    request.generation.topP === undefined &&
+    request.generation.stop === undefined
   ) {
     return undefined;
   }
@@ -182,10 +182,64 @@ function payloadPatch(
   return (value) => {
     if (!isRecord(value)) return undefined;
     let payload = value;
+    const api = model.api;
+    const google = api === "google-generative-ai" || api === "google-vertex";
+    const config = isRecord(payload.config) ? payload.config : {};
+    if (request.generation.topP !== undefined || request.generation.stop !== undefined) {
+      const stop = request.generation.stop;
+      const sequences = typeof stop === "string" ? [stop] : stop;
+      const controls = {
+        ...(request.generation.topP === undefined ? {} : { [google || api === "bedrock-converse-stream" ? "topP" : "top_p"]: request.generation.topP }),
+        ...(stop === undefined ? {} : { [google || api === "bedrock-converse-stream" ? "stopSequences" : api === "anthropic-messages" ? "stop_sequences" : "stop"]: api === "openai-completions" ? stop : sequences }),
+      };
+      payload = google ? { ...payload, config: { ...config, ...controls } }
+        : api === "bedrock-converse-stream" ? { ...payload, inferenceConfig: { ...(isRecord(payload.inferenceConfig) ? payload.inferenceConfig : {}), ...controls } }
+        : { ...payload, ...controls };
+    }
+    if (
+      request.responseFormat !== undefined &&
+      (request.responseFormat.type !== "text" || isOpenAIResponsesApi(api) || api === "openai-completions")
+    ) {
+      const format = piResponseFormat(request.responseFormat, api);
+      if (google) {
+        payload = { ...payload, config: { ...(isRecord(payload.config) ? payload.config : {}), responseMimeType: "application/json", ...(request.responseFormat.type === "json_schema" ? { responseJsonSchema: request.responseFormat.schema } : {}) } };
+      } else if (api === "bedrock-converse-stream") {
+        const response = request.responseFormat;
+        if (response.type === "json_schema") payload = { ...payload, outputConfig: { textFormat: { type: "json_schema", structure: { jsonSchema: { name: response.name, schema: JSON.stringify(response.schema), ...(response.description === undefined ? {} : { description: response.description }) } } } } };
+      } else if (isOpenAIResponsesApi(api)) {
+        payload = { ...payload, text: { ...(isRecord(payload.text) ? payload.text : {}), format } };
+      } else if (api === "anthropic-messages") {
+        payload = { ...payload, output_config: { ...(isRecord(payload.output_config) ? payload.output_config : {}), format } };
+      } else {
+        payload = { ...payload, response_format: format };
+      }
+    }
+    if (request.toolChoice !== undefined) {
+      const choice = request.toolChoice;
+      if (google) {
+        const mode = choice === "none" ? "NONE" : choice === "required" ? "ANY" : "AUTO";
+        payload = { ...payload, config: { ...(isRecord(payload.config) ? payload.config : {}), toolConfig: { functionCallingConfig: { mode } } } };
+      } else if (api === "bedrock-converse-stream") {
+        payload = { ...payload, toolConfig: { ...(isRecord(payload.toolConfig) ? payload.toolConfig : {}), toolChoice: typeof choice === "string" ? choice === "required" ? { any: {} } : { auto: {} } : { tool: { name: choice.name } } } };
+      } else if (Array.isArray(payload.tools) && payload.tools.length > 0) {
+        payload = { ...payload, tool_choice: piToolChoice(choice, api) };
+      } else {
+        const { tool_choice: _, ...withoutToolChoice } = payload;
+        payload = withoutToolChoice;
+      }
+    }
     if (strictTools) payload = patchStrictTools(payload, request, model.api);
     if (parallel !== undefined) payload = patchParallelTools(payload, parallel, model.api);
     if (imageDetailPatch) payload = patchImageDetails(payload, imageDetails);
     if (thinkingPatch) payload = patchAnthropicThinking(payload, request);
+    if (
+      api !== "bedrock-converse-stream" &&
+      !google &&
+      (!Array.isArray(payload.tools) || payload.tools.length === 0)
+    ) {
+      const { tool_choice: _, ...withoutToolChoice } = payload;
+      payload = withoutToolChoice;
+    }
     return payload;
   };
 }

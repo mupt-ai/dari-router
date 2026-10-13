@@ -1,4 +1,4 @@
-import type { AssistantMessage, Context, Tool } from "@mupt-ai/pi-ai";
+import type { AssistantMessage, Context, JsonObject, Tool } from "@mupt-ai/pi-ai";
 
 import { RouterFrameworkError } from "./framework_error.js";
 import { encodeOpenAIReasoningSignature } from "./pi_reasoning_signature.js";
@@ -91,7 +91,7 @@ export function piContext(request: RouterRequest, model: PiModel): Context {
         type: "toolCall",
         id: item.id,
         name: item.name,
-        arguments: argumentsValue,
+        arguments: argumentsValue as JsonObject,
       });
       calls.set(item.id, item.name);
       continue;
