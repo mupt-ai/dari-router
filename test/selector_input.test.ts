@@ -143,8 +143,8 @@ test("normalizes exact, generic, and imputed rows over one resolved candidate gr
       { model_id: CHEAP.model, score: 40 },
       { model_id: STRONG.model, thinking_level: "high", score: 80 },
       { model_id: MID.model, thinking_level: "low", score: 30 },
-      { model_id: "other/ratio-source", thinking_level: "low", score: 20 },
-      { model_id: "other/ratio-source", thinking_level: "medium", score: 40 },
+      { model_id: "fireworks/ratio-source", thinking_level: "low", score: 20 },
+      { model_id: "fireworks/ratio-source", thinking_level: "medium", score: 40 },
     ]),
     [CHEAP, STRONG, MID, missing],
   );
@@ -204,8 +204,8 @@ test("learns ratios from hidden reference evals without serializing them", () =>
   };
   const reference = {
     ...evalCard([
-      { model_id: "other/calibrator", thinking_level: "high", score: 80 },
-      { model_id: "other/calibrator", thinking_level: "medium", score: 60 },
+      { model_id: "fireworks/calibrator", thinking_level: "high", score: 80 },
+      { model_id: "fireworks/calibrator", thinking_level: "medium", score: 60 },
     ]),
     id: "evl_reference",
     name: "Unselected Reference Eval",
@@ -235,10 +235,10 @@ test("imputes from average pairwise ratios on a negative score scale", () => {
   const card = {
     ...evalCard([
       { model_id: MID.model, thinking_level: "low", score: -20 },
-      { model_id: "other/a", thinking_level: "low", score: -60 },
-      { model_id: "other/a", thinking_level: "medium", score: -20 },
-      { model_id: "other/b", thinking_level: "low", score: 0 },
-      { model_id: "other/b", thinking_level: "medium", score: 50 },
+      { model_id: "fireworks/a", thinking_level: "low", score: -60 },
+      { model_id: "fireworks/a", thinking_level: "medium", score: -20 },
+      { model_id: "fireworks/b", thinking_level: "low", score: 0 },
+      { model_id: "fireworks/b", thinking_level: "medium", score: 50 },
     ]),
     min_score: -100,
     max_score: 100,
@@ -261,12 +261,12 @@ test("averages estimates from every measured anchor level", () => {
     ...evalCard([
       { model_id: MID.model, thinking_level: "low", score: -20 },
       { model_id: MID.model, thinking_level: "high", score: 60 },
-      { model_id: "other/a", thinking_level: "low", score: -60 },
-      { model_id: "other/a", thinking_level: "medium", score: -20 },
-      { model_id: "other/a", thinking_level: "high", score: 60 },
-      { model_id: "other/b", thinking_level: "low", score: 0 },
-      { model_id: "other/b", thinking_level: "medium", score: 50 },
-      { model_id: "other/b", thinking_level: "high", score: 100 },
+      { model_id: "fireworks/a", thinking_level: "low", score: -60 },
+      { model_id: "fireworks/a", thinking_level: "medium", score: -20 },
+      { model_id: "fireworks/a", thinking_level: "high", score: 60 },
+      { model_id: "fireworks/b", thinking_level: "low", score: 0 },
+      { model_id: "fireworks/b", thinking_level: "medium", score: 50 },
+      { model_id: "fireworks/b", thinking_level: "high", score: 100 },
     ]),
     min_score: -100,
     max_score: 100,
@@ -282,8 +282,8 @@ test("uses pairwise ratios learned from other evals", () => {
   ]);
   const evidence: RouterEval = {
     ...evalCard([
-      { model_id: "other/a", thinking_level: "low", score: 20 },
-      { model_id: "other/a", thinking_level: "medium", score: 40 },
+      { model_id: "fireworks/a", thinking_level: "low", score: 20 },
+      { model_id: "fireworks/a", thinking_level: "medium", score: 40 },
     ]),
     id: "evl_other",
   };
@@ -304,9 +304,9 @@ test("drops invalid anchor estimates before averaging valid anchors", () => {
     ...evalCard([
       { model_id: MID.model, thinking_level: "off", score: 29.28 },
       { model_id: MID.model, thinking_level: "max", score: 51.77 },
-      { model_id: "other/a", thinking_level: "off", score: 5 },
-      { model_id: "other/a", thinking_level: "high", score: 50 },
-      { model_id: "other/a", thinking_level: "max", score: 50 },
+      { model_id: "fireworks/a", thinking_level: "off", score: 5 },
+      { model_id: "fireworks/a", thinking_level: "high", score: 50 },
+      { model_id: "fireworks/a", thinking_level: "max", score: 50 },
     ]),
     min_score: 0,
     max_score: 100,
@@ -336,11 +336,22 @@ test("selector labels borrowed predecessor scores and excludes them when imputat
   }).imported_evals).toHaveLength(0);
 });
 
+test("selector estimates do not undercut lower effort measurements", () => {
+  const candidate = { model: "openai/gpt-6.1-sol", reasoningEffort: "high" } satisfies RoutingCandidate;
+  const input = imputedInput(evalCard([
+    { model_id: candidate.model, thinking_level: "low", score: 93 },
+    { model_id: "openai/gpt-6-sol", thinking_level: "high", score: 87 },
+  ]), [candidate]);
+  expect(scores(input)[0]).toMatchObject({
+    score: 93, imputed: true, source_model_id: "openai/gpt-6-sol",
+  });
+});
+
 test("does not impute from an anchor at the score range floor", () => {
   const target = evalCard([
     { model_id: MID.model, thinking_level: "low", score: 0 },
-    { model_id: "other/a", thinking_level: "low", score: 20 },
-    { model_id: "other/a", thinking_level: "medium", score: 40 },
+    { model_id: "fireworks/a", thinking_level: "low", score: 20 },
+    { model_id: "fireworks/a", thinking_level: "medium", score: 40 },
   ]);
 
   expect(imputedInput(target, [MID]).imported_evals).toHaveLength(0);

@@ -17,10 +17,25 @@ npm install --ignore-scripts "$temporary_dir/$package_archive" >/dev/null
 node --input-type=module <<'EOF'
 import {
   createThinkingLevelRatios,
+  resolveRouterEvalScore,
 } from "@mupt-ai/dari-router/eval-score-imputation";
 
-if (createThinkingLevelRatios([]).size !== 0) {
-  throw new Error("Unexpected imputation result from the packed package");
+const ratios = createThinkingLevelRatios([{
+  min_score: 0, max_score: 100,
+  scores: [
+    { model_id: "openai/calibrator", thinking_level: "low", score: 20 },
+    { model_id: "openai/calibrator", thinking_level: "high", score: 40 },
+    { model_id: "anthropic/calibrator", thinking_level: "low", score: 40 },
+    { model_id: "anthropic/calibrator", thinking_level: "high", score: 20 },
+  ],
+}]);
+const resolved = resolveRouterEvalScore({
+  scores: [{ model_id: "openai/target", thinking_level: "low", score: 30 }],
+  modelId: "openai/target", thinkingLevel: "high",
+  minScore: 0, maxScore: 100, impute: true, ratios,
+});
+if (resolved?.score !== 60 || !resolved.imputed) {
+  throw new Error("Provider-local imputation failed in the packed package");
 }
 EOF
 

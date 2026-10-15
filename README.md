@@ -115,6 +115,19 @@ import {
 } from "@mupt-ai/dari-router/eval-score-imputation";
 ```
 
+Imputation learns a separate thinking-level graph for each model owner (the
+canonical model ID namespace, such as `openai` or `anthropic`), not the serving
+provider. Each edge averages ratios observed within the same model and eval.
+Direct edges win; otherwise shortest-path products are averaged. Providers never
+share edges or act as a global fallback. Exact and generic scores still win,
+and explicitly mapped predecessor models remain the final fallback. Only
+estimated scores are made nondecreasing with effort: future measured scores cap
+estimates, then prefix maxima prevent higher-effort estimates from falling below
+lower-effort evidence. Measured scores and calibration data are never changed.
+Conflicting measured bounds leave the missing interval blank. The graph algorithm
+lives in `src/thinking_level_graph.ts`; eval parsing and normalization stay in
+`src/eval_score_imputation.ts`.
+
 Most applications should use `createRouter`. Use `router.evaluatePolicy()` for stateless previews and `router.select()` when you need the same lease-aware selection used by `router.fetch()`.
 
 ## Development

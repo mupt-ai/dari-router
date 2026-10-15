@@ -1,4 +1,12 @@
+import {
+  buildThinkingLevelGraphs,
+  thinkingLevelRatio,
+  type ThinkingLevelObservation,
+  type ThinkingLevelRatios,
+} from "./thinking_level_graph.js";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./types.js";
+
+export type { ThinkingLevelRatios } from "./thinking_level_graph.js";
 
 export type EvalScoreForImputation = {
   model_id: string;
@@ -12,8 +20,6 @@ export type EvalForImputation = {
   max_score: number;
   scores: readonly EvalScoreForImputation[];
 };
-
-export type ThinkingLevelRatios = ReadonlyMap<string, number>;
 
 // Only named, same-family predecessors may stand in for a new model while
 // benchmark sources catch up. Never infer a predecessor from a slug.
@@ -37,33 +43,20 @@ export type ResolvedRouterEvalScore = {
 export function createThinkingLevelRatios(
   evals: readonly EvalForImputation[],
 ): ThinkingLevelRatios {
-  const samples = new Map<string, number[]>();
+  const observations: ThinkingLevelObservation[] = [];
   for (const evalCard of evals) {
     const range = evalCard.max_score - evalCard.min_score;
     if (!Number.isFinite(range) || range <= 0) continue;
-    const byModel = explicitScoresByModel(
-      evalCard.scores,
-      evalCard.min_score,
-      range,
-    );
-    for (const levels of byModel.values()) {
-      for (const [targetLevel, targetScore] of levels) {
-        for (const [anchorLevel, anchorScore] of levels) {
-          if (targetLevel === anchorLevel || anchorScore <= 0) continue;
-          const ratio = targetScore / anchorScore;
-          if (!Number.isFinite(ratio) || ratio < 0) continue;
-          const key = thinkingLevelPairKey(targetLevel, anchorLevel);
-          const values = samples.get(key) ?? [];
-          values.push(ratio);
-          samples.set(key, values);
-        }
-      }
+    const byModel = explicitScoresByModel(evalCard.scores, evalCard.min_score, range);
+    for (const [modelId, levels] of byModel) {
+      const provider = modelOwner(modelId);
+      if (provider) observations.push({ provider, levels });
     }
   }
-  return new Map([...samples].map(([key, values]) => [key, mean(values)]));
+  return buildThinkingLevelGraphs(observations);
 }
 
-export function resolveRouterEvalScore(args: {
+type ResolveScoreArgs = {
   scores: readonly EvalScoreForImputation[];
   modelId: string;
   thinkingLevel: ReasoningEffort;
@@ -71,7 +64,38 @@ export function resolveRouterEvalScore(args: {
   maxScore: number;
   impute?: boolean;
   ratios?: ThinkingLevelRatios;
-}): ResolvedRouterEvalScore | null {
+};
+
+export function resolveRouterEvalScore(args: ResolveScoreArgs): ResolvedRouterEvalScore | null {
+  const resolved = resolveRawScore(args);
+  if (!resolved?.imputed) return resolved;
+
+  // Include every effort, not just enabled candidates, so previews and runtime
+  // agree. Cap each estimate by future measured data, then take prefix maxima.
+  const levels = REASONING_EFFORTS.map((thinkingLevel) => resolveRawScore({ ...args, thinkingLevel }));
+  const target = REASONING_EFFORTS.indexOf(args.thinkingLevel);
+  let floor = -Infinity;
+  for (let index = 0; index <= target; index++) {
+    const row = levels[index];
+    if (!row) continue;
+    if (!row.imputed) {
+      floor = Math.max(floor, row.score);
+      continue;
+    }
+    const ceiling = Math.min(Infinity, ...levels.slice(index + 1).flatMap(
+      (next) => next && !next.imputed ? [next.score] : [],
+    ));
+    // Measured regressions can make a missing interval impossible to fill.
+    if (floor > ceiling) {
+      if (index === target) return null;
+      continue;
+    }
+    floor = Math.max(floor, Math.min(row.score, ceiling));
+  }
+  return { ...resolved, score: floor };
+}
+
+function resolveRawScore(args: ResolveScoreArgs): ResolvedRouterEvalScore | null {
   const modelScores = args.scores.filter(
     (score) => score.model_id === args.modelId,
   );
@@ -86,6 +110,7 @@ export function resolveRouterEvalScore(args: {
   const ratios = args.ratios ?? new Map();
   const score = pairwiseRatioScore(
     modelScores,
+    modelOwner(args.modelId),
     args.thinkingLevel,
     args.minScore,
     args.maxScore,
@@ -102,6 +127,7 @@ export function resolveRouterEvalScore(args: {
     ?? previousScores.find((row) => row.thinking_level == null);
   const borrowed = predecessor?.score ?? pairwiseRatioScore(
     previousScores,
+    modelOwner(previous),
     args.thinkingLevel,
     args.minScore,
     args.maxScore,
@@ -154,10 +180,11 @@ export function resolveRouterEvalTaskCost(args: {
   if (!(args.impute ?? false)) return null;
   const estimates = priced.flatMap((anchor) => {
     if (anchor.thinking_level == null) return [];
-    const ratio = resolveThinkingLevelRatio(
+    const ratio = thinkingLevelRatio(
       args.ratios ?? new Map(),
-      args.thinkingLevel,
+      modelOwner(args.modelId),
       anchor.thinking_level,
+      args.thinkingLevel,
     );
     return ratio === undefined ? [] : [anchor.cost_per_task_usd! * ratio];
   });
@@ -166,6 +193,7 @@ export function resolveRouterEvalTaskCost(args: {
 
 function pairwiseRatioScore(
   modelScores: readonly EvalScoreForImputation[],
+  provider: string,
   targetLevel: ReasoningEffort,
   minScore: number,
   maxScore: number,
@@ -177,11 +205,7 @@ function pairwiseRatioScore(
   const estimates: number[] = [];
   for (const anchor of modelScores) {
     if (anchor.thinking_level == null || !Number.isFinite(anchor.score)) continue;
-    const ratio = resolveThinkingLevelRatio(
-      ratios,
-      targetLevel,
-      anchor.thinking_level,
-    );
+    const ratio = thinkingLevelRatio(ratios, provider, anchor.thinking_level, targetLevel);
     if (ratio === undefined) continue;
     const normalizedAnchor = (anchor.score - minScore) / range;
     if (normalizedAnchor <= 0) continue;
@@ -192,50 +216,6 @@ function pairwiseRatioScore(
   }
   if (estimates.length === 0) return null;
   return round2(minScore + mean(estimates) * range);
-}
-
-// Prefer a directly observed relationship. When none exists, compose the
-// shortest available chains (for example medium -> max -> xhigh) and average
-// their products. This lets sparse calibration cards connect levels without a
-// longer chain overriding stronger direct evidence.
-function resolveThinkingLevelRatio(
-  ratios: ThinkingLevelRatios,
-  targetLevel: ReasoningEffort,
-  anchorLevel: ReasoningEffort,
-): number | undefined {
-  const direct = ratios.get(thinkingLevelPairKey(targetLevel, anchorLevel));
-  if (direct !== undefined) return direct;
-
-  type RatioPaths = { sum: number; count: number };
-  let frontier = new Map<ReasoningEffort, RatioPaths>([
-    [anchorLevel, { sum: 1, count: 1 }],
-  ]);
-  const visited = new Set<ReasoningEffort>([anchorLevel]);
-
-  while (frontier.size > 0) {
-    const next = new Map<ReasoningEffort, RatioPaths>();
-    for (const [currentLevel, paths] of frontier) {
-      for (const nextLevel of REASONING_EFFORTS) {
-        if (visited.has(nextLevel)) continue;
-        const edge = ratios.get(
-          thinkingLevelPairKey(nextLevel, currentLevel),
-        );
-        if (edge === undefined || !Number.isFinite(edge) || edge < 0) continue;
-        const existing = next.get(nextLevel) ?? { sum: 0, count: 0 };
-        existing.sum += paths.sum * edge;
-        existing.count += paths.count;
-        next.set(nextLevel, existing);
-      }
-    }
-
-    const targetPaths = next.get(targetLevel);
-    if (targetPaths !== undefined) {
-      return targetPaths.sum / targetPaths.count;
-    }
-    for (const level of next.keys()) visited.add(level);
-    frontier = next;
-  }
-  return undefined;
 }
 
 function explicitScoresByModel(
@@ -255,11 +235,11 @@ function explicitScoresByModel(
   return result;
 }
 
-function thinkingLevelPairKey(
-  target: ReasoningEffort,
-  anchor: ReasoningEffort,
-): string {
-  return `${target}\u0000${anchor}`;
+// Eval model IDs use the canonical owner's namespace, not the serving provider.
+// Unqualified IDs have no owner evidence and cannot calibrate or use a graph.
+function modelOwner(modelId: string): string {
+  const slash = modelId.indexOf("/");
+  return slash > 0 ? modelId.slice(0, slash).toLowerCase() : "";
 }
 
 function mean(values: readonly number[]): number {
