@@ -78,7 +78,7 @@ export function anthropicMinCacheTokens(model: string, provider?: string): numbe
   ) {
     return 4096;
   }
-  if (native.includes("fable-5")) {
+  if (native.includes("fable-5") || native.includes("haiku-5-5")) {
     return 512;
   }
   return OPENAI_MIN_CACHE_TOKENS;

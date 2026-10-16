@@ -48,6 +48,7 @@ test("classifies serving aliases by canonical model owner", () => {
 
 test("tracks provider-specific cache token minimums", () => {
   expect(anthropicMinCacheTokens("anthropic/claude-fable-5")).toBe(512);
+  expect(anthropicMinCacheTokens("anthropic/claude-haiku-5-5")).toBe(512);
   expect(anthropicMinCacheTokens("anthropic/claude-sonnet-4-6")).toBe(1024);
   expect(anthropicMinCacheTokens("anthropic/claude-opus-4.7")).toBe(1024);
   expect(anthropicMinCacheTokens("anthropic/claude-opus-4-6")).toBe(4096);
