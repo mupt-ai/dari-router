@@ -102,13 +102,9 @@ function compactRoutingMessage<T extends RoutingHistoryMessage>(
   if (Array.isArray(content)) {
     return compactRoutingMessageParts(message, content, maxChars);
   }
-  const text = contentText(content);
-  const shell = { ...message, content: "" };
-  // Leave room for JSON escaping introduced by the truncation marker.
-  const availableChars = maxChars - JSON.stringify(shell).length - 32;
-  if (availableChars < 128 || text.length === 0) return undefined;
-  const compacted = { ...message, content: elideMiddle(text, availableChars) };
-  return JSON.stringify(compacted).length <= maxChars ? compacted : undefined;
+  const text = typeof content === "string" ? content : "";
+  if (text.length === 0) return undefined;
+  return fitRoutingMessage(maxChars, (budget) => ({ ...message, content: elideMiddle(text, budget) }));
 }
 
 function compactRoutingMessageParts<T extends RoutingHistoryMessage>(
@@ -116,42 +112,48 @@ function compactRoutingMessageParts<T extends RoutingHistoryMessage>(
   content: unknown[],
   maxChars: number,
 ): T | undefined {
-  const text = contentText(content);
   const nonTextContent = content.filter((part) => !isTextPart(part));
   const shell = { ...message, content: nonTextContent };
-  const shellChars = JSON.stringify(shell).length;
-  if (shellChars > maxChars) return undefined;
-  if (text.length === 0) return shell;
+  if (JSON.stringify(shell).length > maxChars) return undefined;
+  const texts = content.filter(isTextPart).map((part) => part.text as string);
+  if (texts.every((text) => text.length === 0)) return shell;
 
-  const availableChars = maxChars - shellChars - 32;
-  if (availableChars < 128) {
-    return nonTextContent.length > 0 ? shell : undefined;
-  }
-  const textPart = { type: "text", text: elideMiddle(text, availableChars) };
-  const compacted = {
-    ...message,
-    content: compactContentParts(content, textPart),
-  };
-  if (JSON.stringify(compacted).length <= maxChars) return compacted;
-  return nonTextContent.length > 0 ? shell : undefined;
+  const compacted = fitRoutingMessage(maxChars, (budget) => {
+    const fitted = fitTextParts(texts, budget);
+    let next = 0;
+    return {
+      ...message,
+      content: content.map((part) => (isTextPart(part) ? { ...part, text: fitted[next++] } : part)),
+    };
+  });
+  return compacted ?? (nonTextContent.length > 0 ? shell : undefined);
 }
 
-function compactContentParts(
-  content: unknown[],
-  textPart: Record<string, unknown>,
-): unknown[] {
-  let insertedText = false;
-  const compacted: unknown[] = [];
-  for (const part of content) {
-    if (isTextPart(part)) {
-      if (!insertedText) compacted.push(textPart);
-      insertedText = true;
-      continue;
-    }
-    compacted.push(part);
+// JSON escaping makes raw text length an underestimate, so shrink the text
+// budget by each overflow until the serialized message fits.
+function fitRoutingMessage<T>(maxChars: number, render: (textBudget: number) => T): T | undefined {
+  let textBudget = maxChars - JSON.stringify(render(0)).length;
+  while (textBudget >= 128) {
+    const rendered = render(textBudget);
+    const overflow = JSON.stringify(rendered).length - maxChars;
+    if (overflow <= 0) return rendered;
+    textBudget -= overflow;
   }
-  if (!insertedText) compacted.push(textPart);
-  return compacted;
+  return undefined;
+}
+
+// Harnesses wrap the user's request in long context parts (Claude Code's
+// system reminders and environment listing), so short parts stay whole and
+// the longest parts share what is left.
+function fitTextParts(texts: string[], budget: number): string[] {
+  const fitted = [...texts];
+  const byLength = texts.map((_, index) => index).sort((left, right) => texts[left]!.length - texts[right]!.length);
+  let remaining = budget;
+  for (const [position, index] of byLength.entries()) {
+    fitted[index] = elideMiddle(texts[index]!, Math.floor(remaining / (byLength.length - position)));
+    remaining -= fitted[index]!.length;
+  }
+  return fitted;
 }
 
 function isTextPart(value: unknown): value is Record<string, unknown> {
@@ -164,21 +166,10 @@ function isTextPart(value: unknown): value is Record<string, unknown> {
   );
 }
 
-function contentText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((block) => {
-      if (typeof block !== "object" || block === null || Array.isArray(block)) return [];
-      const text = (block as Record<string, unknown>).text;
-      return typeof text === "string" ? [text] : [];
-    })
-    .join("\n");
-}
-
 function elideMiddle(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   const marker = "\n...[router history truncated]...\n";
+  if (maxChars <= 0) return "";
   if (maxChars <= marker.length) return value.slice(-maxChars);
   const retainedChars = maxChars - marker.length;
   const prefixChars = Math.floor(retainedChars / 2);
