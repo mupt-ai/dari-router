@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import type { JsonObject } from "../src/json.js";
-import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "../src/prompts.js";
+import { ANONYMOUS_ACTION_SYSTEM_PROMPT, ANONYMOUS_RULES_PROMPT } from "../src/prompts.js";
 import {
   assignAnonymousActions,
   assignStableAnonymousActions,
@@ -555,4 +555,38 @@ test("states the lease menu as a range when contiguous and as values otherwise",
   );
   expect(leaseAnswerInstruction([30, 5, 10])).toEndWith("turns is one of 5, 10, 30.");
   expect(() => leaseAnswerInstruction([])).toThrow("requires lease turn options");
+});
+
+test("a custom router's rules become an anonymous system addendum", () => {
+  const slots = assignAnonymousActions(CANDIDATES, rng(42));
+  const plain = buildAnonymousPolicyPrompt(anonymizeSelectorInput(selectorInput(), slots), slots);
+  const anonymous = anonymizeSelectorInput(
+    {
+      ...selectorInput(),
+      custom_rules: [
+        { when: "planning and design", use: STRONG, thinking_level: null },
+        { when: "small edits", use: CHEAP, thinking_level: "low" },
+      ],
+      default_target: { model: MEDIUM, thinking_level: null },
+    },
+    slots,
+  );
+  const prompt = buildAnonymousPolicyPrompt(anonymous, slots);
+  const [systemMessage, userMessage] = prompt.messages;
+
+  expect(anonymous.router_rules).toEqual({
+    rules: [
+      { when: "planning and design", actions: [actionFor(slots, STRONG)] },
+      { when: "small edits", actions: [actionFor(slots, CHEAP)] },
+    ],
+    default_actions: [actionFor(slots, MEDIUM)],
+  });
+  expect(systemMessage.content.startsWith(`${ANONYMOUS_ACTION_SYSTEM_PROMPT}\n\n${ANONYMOUS_RULES_PROMPT}\n`)).toBe(true);
+  expect(systemMessage.content).toContain(
+    `<router_rules>\n- When "planning and design": Action ${actionFor(slots, STRONG)}\n`,
+  );
+  expect(systemMessage.content).toContain(`- Default: Action ${actionFor(slots, MEDIUM)}\n</router_rules>`);
+  for (const model of [CHEAP, STRONG, MEDIUM]) expect(systemMessage.content).not.toContain(model);
+  // The data message is the same as for a router without rules.
+  expect(userMessage).toEqual(plain.messages[1]);
 });

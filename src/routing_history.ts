@@ -166,7 +166,19 @@ function isTextPart(value: unknown): value is Record<string, unknown> {
   );
 }
 
-function elideMiddle(value: string, maxChars: number): string {
+export function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((block) => {
+      if (typeof block !== "object" || block === null || Array.isArray(block)) return [];
+      const text = (block as Record<string, unknown>).text;
+      return typeof text === "string" ? [text] : [];
+    })
+    .join("\n");
+}
+
+export function elideMiddle(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   const marker = "\n...[router history truncated]...\n";
   if (maxChars <= 0) return "";

@@ -1,40 +1,34 @@
-// TypeSafe Jev selector over the anonymous-action protocol. Jev
-// (docs.typesafe.ai) is a System One model: it answers typed questions about
-// a state instead of generating text, so the routing decision is two Choice
-// questions over the same state — which anonymous candidate action serves
-// the next turns, and how long a lease to commit to — and the answer comes
-// back as calibrated probabilities rather than parsed JSON.
+// TypeSafe Jev as a routing selector over the anonymous-action protocol.
+// Jev answers two Choice questions about the de-identified selector input —
+// which anonymous candidate action serves the next turns, and how long a
+// lease to commit to — and the answers come back as calibrated
+// probabilities rather than parsed JSON. The hosted router uses it as the
+// fallback when Dari's policy endpoint is unavailable.
 //
-// This is an alternative to Dari's trained routing policy. Candidates are
-// de-identified through the same anonymous-action protocol Dari uses
-// (anonymous_actions.ts), so Jev decides on benchmark and cost evidence and
-// never sees a model identity; comparisons Jev is weak at (cost ordering,
-// benchmark standing) are computed here and passed as text.
+// Candidates are de-identified through the same anonymous-action protocol
+// Dari uses (anonymous_actions.ts), so Jev decides on benchmark and cost
+// evidence and never sees a model identity; comparisons Jev is weak at (cost
+// ordering, benchmark standing) are computed here and passed as text.
 
 import {
   anonymizeSelectorInput,
-  assignAnonymousActions,
-  sessionRng,
   type AnonymousActionCost,
   type AnonymousActionSlot,
   type AnonymousSelectorInput,
 } from "./anonymous_actions.js";
-import { RouterCoreError } from "./errors.js";
-import { RouterFrameworkError } from "./framework_error.js";
-import { FIXED_TURN_COST_COMPARISON_TURNS, SELECTOR_LEASE_TURNS } from "./fixed_turn_cost_config.js";
-import type { JsonObject, JsonValue } from "./json.js";
-import type { Selector } from "./route.js";
-import type { CustomSelectorInput, SelectorInput } from "./selector_input.js";
+import { FIXED_TURN_COST_COMPARISON_TURNS } from "./fixed_turn_cost_config.js";
 import {
-  isRecord,
-  type ChatCompletionRequest,
-  type RoutingCandidate,
-  type RoutingDecision,
-} from "./types.js";
+  invalidJevResponse,
+  JevOutputError,
+  postSystemOne,
+  type JevTokenUsage,
+  type ResolvedJevConfig,
+} from "./jev_client.js";
+import type { JsonObject, JsonValue } from "./json.js";
+import { fillPrompt, JEV_SELECTOR_PROMPT } from "./prompts.js";
+import type { CustomSelectorInput, SelectorInput } from "./selector_input.js";
+import { isRecord, type RoutingDecision } from "./types.js";
 
-export const DEFAULT_JEV_ENDPOINT = "https://api.typesafe.ai/v1";
-export const DEFAULT_JEV_MODEL = "jev-latest";
-const DEFAULT_JEV_TIMEOUT_MS = 30_000;
 // Jev evaluates up to 32k tokens of state plus the longest question, and
 // JSON-shaped conversation state tokenizes at roughly 2.7 characters per
 // token. The selector request is sized on its JSON-escaped messages, which
@@ -42,29 +36,10 @@ const DEFAULT_JEV_TIMEOUT_MS = 30_000;
 // questions and the action descriptions.
 export const JEV_SELECTOR_CONTEXT_WINDOW_CHARS = 64_000;
 
-// Rate-limit and overload responses get one backoff retry; anything else is
-// the caller's failure to surface.
-const JEV_RETRY_STATUSES = new Set([429, 529]);
-const JEV_ATTEMPTS = 2;
-const JEV_RETRY_DELAY_MS = 500;
-const JEV_RETRY_MAX_DELAY_MS = 5_000;
-
-export type JevSelectorConfig = {
-  apiKey: string;
-  endpoint?: string;
-  model?: string;
+export type JevSelectorConfig = ResolvedJevConfig & {
   // Turn commitments offered as the lease question. Empty routes one turn at
   // a time without asking.
-  leaseTurns?: readonly number[];
-  timeoutMs?: number;
-};
-
-export type ResolvedJevSelectorConfig = {
-  apiKey: string;
-  endpoint: string;
-  model: string;
   leaseTurns: readonly number[];
-  timeoutMs: number;
 };
 
 export type JevChoiceQuestion = {
@@ -89,8 +64,6 @@ export type JevChoiceAnswer = {
   probabilities: Record<string, number>;
 };
 
-export type JevTokenUsage = { input_tokens: number; output_tokens: number };
-
 export type JevSystemOneResponse = {
   model: string;
   answers: {
@@ -100,60 +73,11 @@ export type JevSystemOneResponse = {
   usage: JevTokenUsage;
 };
 
-// selector_output after TypeSafe returned 200. Token counts are on the body
-// even when the action or lease answer is rejected, so hosts can still bill
-// the selector call.
-export class JevSelectorOutputError extends RouterCoreError {
-  readonly usage: JevTokenUsage | null;
-
-  constructor(message: string, code: string, usage: JevTokenUsage | null = null) {
-    super("selector_output", message, code);
-    this.name = "JevSelectorOutputError";
-    this.usage = usage;
-  }
-}
-
 export type JevSelection = {
   decision: RoutingDecision;
   request: JevSystemOneRequest;
   response: JevSystemOneResponse;
 };
-
-export function resolveJevSelectorConfig(input: JevSelectorConfig): ResolvedJevSelectorConfig {
-  const apiKey = input.apiKey?.trim() ?? "";
-  if (!apiKey) throw configurationError("Jev selector requires an apiKey.", "apiKey");
-  const endpoint = (input.endpoint ?? DEFAULT_JEV_ENDPOINT).trim().replace(/\/+$/, "");
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    throw configurationError("Jev selector endpoint must be a valid URL.", "endpoint");
-  }
-  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) {
-    throw configurationError(
-      "Jev selector endpoint must be an HTTP(S) URL without embedded credentials.",
-      "endpoint",
-    );
-  }
-  const model = (input.model ?? DEFAULT_JEV_MODEL).trim();
-  if (!model) throw configurationError("Jev selector model must not be empty.", "model");
-  const leaseTurns = input.leaseTurns ?? SELECTOR_LEASE_TURNS;
-  if (
-    leaseTurns.some((turns, index) =>
-      !Number.isSafeInteger(turns) || turns <= 0 || (index > 0 && turns <= leaseTurns[index - 1]!)
-    )
-  ) {
-    throw configurationError(
-      "Jev selector leaseTurns must be ascending positive integers.",
-      "leaseTurns",
-    );
-  }
-  const timeoutMs = input.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-    throw configurationError("Jev selector timeoutMs must be a positive integer.", "timeoutMs");
-  }
-  return { apiKey, endpoint, model, leaseTurns, timeoutMs };
-}
 
 // Renders the de-identified selector input as a Jev request. Every candidate
 // identity has already been replaced by its action letter; the only evidence
@@ -203,15 +127,14 @@ export function buildJevSelectorRequest(
     action: {
       type: "choice",
       instructions: {
-        question: "Which action should serve the coding agent's next turns?",
-        rules: [
-          "Capability first: the action must be able to handle the task; capability is never traded away for cost.",
-          "Judge the task's difficulty and how much work remains from the user's messages in `conversation`, `lease_history`, and the latest agent turns.",
-          "Use each action's benchmark scores and ranks as evidence of capability. A missing benchmark means the action was not measured on it, not that it scored poorly.",
-          "When several actions are capable enough, choose the one with the best (lowest-numbered) cost rank.",
-          "Prefer `previous_action` while the task and its current phase have not changed.",
-        ],
+        question: JEV_SELECTOR_PROMPT.action.question,
+        rules: anonymousInput.router_rules === undefined
+          ? JEV_SELECTOR_PROMPT.action.rules
+          : [...JEV_SELECTOR_PROMPT.action.rules, JEV_SELECTOR_PROMPT.action.router_rules_rule],
         ...(Object.keys(glossary).length === 0 ? {} : { benchmarks: glossary }),
+        ...(anonymousInput.router_rules === undefined
+          ? {}
+          : { router_rules: anonymousInput.router_rules as unknown as JsonValue }),
       },
       criteria,
     },
@@ -221,23 +144,18 @@ export function buildJevSelectorRequest(
 }
 
 function leaseQuestion(leaseTurns: readonly number[]): JevChoiceQuestion {
+  const { question, guidance, criteria: templates } = JEV_SELECTOR_PROMPT.lease;
   const last = leaseTurns.length - 1;
   const criteria: Record<string, JsonValue> = {};
   leaseTurns.forEach((turns, index) => {
-    criteria[String(turns)] = index === 0
-      ? `${turns} turns: the task is nearly done, or the next step may change what the agent needs.`
+    const template = index === 0
+      ? templates.shortest
       : index === last
-        ? `${turns} turns: a long stretch of similar work remains, such as a large implementation or many edit-and-test cycles.`
-        : `${turns} turns: a bounded stretch of similar work remains.`;
+        ? templates.longest
+        : templates.middle;
+    criteria[String(turns)] = fillPrompt(template, { turns: String(turns) });
   });
-  return {
-    type: "choice",
-    instructions: {
-      question: "How many consecutive turns should the chosen action serve before the router reconsiders?",
-      guidance: "A longer lease amortizes the cold start paid on its first turn across warm cache hits on the turns that follow. The lease ends early only if the task finishes or the provider fails. Judge from how much similar work remains after the latest turn of `conversation`.",
-    },
-    criteria,
-  };
+  return { type: "choice", instructions: { question, guidance }, criteria };
 }
 
 export function parseJevSelectorResponse(
@@ -262,7 +180,7 @@ export function parseJevSelectorResponse(
   const action = choiceAnswer(body.answers.action, "action", tokenUsage);
   const slot = args.slots.find((entry) => entry.action === action.choice);
   if (slot === undefined) {
-    throw new JevSelectorOutputError(
+    throw new JevOutputError(
       "Jev selected an action outside this router's candidates.",
       "selector_invalid_candidate",
       tokenUsage,
@@ -314,16 +232,9 @@ function decisionReason(
 export async function selectWithJev(
   selectorInput: SelectorInput | CustomSelectorInput,
   slots: readonly AnonymousActionSlot[],
-  config: ResolvedJevSelectorConfig,
+  config: JevSelectorConfig,
   signal?: AbortSignal,
 ): Promise<JevSelection> {
-  if ("custom_rules" in selectorInput || "default_target" in selectorInput) {
-    throw new RouterCoreError(
-      "configuration",
-      "The Jev selector serves only the default routing policy and cannot apply custom routing rules.",
-      "custom_rules_not_supported",
-    );
-  }
   const anonymousInput = anonymizeSelectorInput(selectorInput as unknown as JsonObject, slots);
   const request = buildJevSelectorRequest(anonymousInput, config);
   const body = await postSystemOne(request, config, signal);
@@ -340,162 +251,7 @@ export async function selectWithJev(
 // Letters are assigned per call: the framework path carries no conversation
 // identity, and every candidate-bearing field is re-lettered together, so
 // correctness never depends on cross-turn stability.
-export function createJevSelector(input: JevSelectorConfig): Selector {
-  const config = resolveJevSelectorConfig(input);
-  return {
-    async select(request, signal) {
-      const selectorInput = selectorInputFromRequest(request);
-      const single = singleCandidate(selectorInput);
-      if (single !== undefined) {
-        return JSON.stringify({
-          selected_model: single.model,
-          reasoning_effort: single.reasoningEffort,
-          reason: "The router has only one compatible model/thinking-level pair.",
-        });
-      }
-      const candidates = selectorInput.candidate_pairs.map((pair) => ({
-        model: pair.model,
-        reasoningEffort: pair.thinking_level,
-      }));
-      const rng = typeof request.prompt_cache_key === "string" && request.prompt_cache_key !== ""
-        ? sessionRng(request.prompt_cache_key)
-        : Math.random;
-      let selection: JevSelection;
-      try {
-        selection = await selectWithJev(
-          selectorInput,
-          assignAnonymousActions(candidates, rng),
-          config,
-          signal,
-        );
-      } catch (error) {
-        throw frameworkError(error);
-      }
-      const { decision, response } = selection;
-      return JSON.stringify({
-        selected_model: decision.selectedModel,
-        reasoning_effort: decision.reasoningEffort,
-        reason: decision.reason,
-        ...(decision.leaseTurnsRemaining === undefined
-          ? {}
-          : { lease_turns_remaining: decision.leaseTurnsRemaining }),
-        jev: response,
-      });
-    },
-  };
-}
 
-function singleCandidate(
-  selectorInput: SelectorInput,
-): RoutingCandidate | undefined {
-  if (selectorInput.candidate_pairs.length !== 1) return undefined;
-  const pair = selectorInput.candidate_pairs[0]!;
-  return { model: pair.model, reasoningEffort: pair.thinking_level };
-}
-
-async function postSystemOne(
-  request: JevSystemOneRequest,
-  config: ResolvedJevSelectorConfig,
-  signal: AbortSignal | undefined,
-): Promise<unknown> {
-  for (let attempt = 1; ; attempt += 1) {
-    const response = await fetchSystemOne(request, config, signal);
-    if (response.ok) {
-      try {
-        return await response.json();
-      } catch {
-        throw invalidResponse("Jev returned a non-JSON response body.");
-      }
-    }
-    if (attempt < JEV_ATTEMPTS && JEV_RETRY_STATUSES.has(response.status)) {
-      await delay(retryDelayMs(response.headers.get("retry-after")), signal);
-      continue;
-    }
-    const body = await response.text().catch(() => "");
-    throw new RouterFrameworkError(
-      "policy",
-      `Jev returned HTTP ${response.status}: ${body}`,
-      "jev_http_error",
-    );
-  }
-}
-
-async function fetchSystemOne(
-  request: JevSystemOneRequest,
-  config: ResolvedJevSelectorConfig,
-  signal: AbortSignal | undefined,
-): Promise<Response> {
-  const timeout = AbortSignal.timeout(config.timeoutMs);
-  try {
-    return await fetch(`${config.endpoint}/systemone`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-      signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
-    });
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    throw new RouterFrameworkError(
-      "policy",
-      `Jev request failed: ${error instanceof Error ? error.message : String(error)}`,
-      "jev_request_failed",
-      undefined,
-      { cause: error },
-    );
-  }
-}
-
-function retryDelayMs(retryAfter: string | null): number {
-  const seconds = Number(retryAfter);
-  if (retryAfter === null || !Number.isFinite(seconds) || seconds <= 0) return JEV_RETRY_DELAY_MS;
-  return Math.min(seconds * 1000, JEV_RETRY_MAX_DELAY_MS);
-}
-
-function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-function selectorInputFromRequest(request: ChatCompletionRequest): SelectorInput {
-  const user = request.messages?.find((message) => message.role === "user");
-  if (typeof user?.content !== "string") {
-    throw new RouterCoreError(
-      "invalid_request",
-      "Selector request is missing the JSON user message.",
-      "invalid_request_error",
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(user.content);
-  } catch {
-    throw new RouterCoreError(
-      "invalid_request",
-      "Selector request user message is not valid JSON.",
-      "invalid_request_error",
-    );
-  }
-  if (!isRecord(parsed) || !Array.isArray(parsed.candidate_pairs) || !Array.isArray(parsed.messages)) {
-    throw new RouterCoreError(
-      "invalid_request",
-      "Selector input is missing candidate_pairs or messages.",
-      "invalid_request_error",
-    );
-  }
-  return parsed as unknown as SelectorInput;
-}
 
 // Cost per action as text Jev can compare literally: the loop projections at
 // each lease length, plus a rank across actions on the comparison horizon.
@@ -570,16 +326,5 @@ function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function invalidResponse(message: string, usage: JevTokenUsage | null = null): JevSelectorOutputError {
-  return new JevSelectorOutputError(message, "selector_invalid_response", usage);
-}
 
-function configurationError(message: string, param: string): RouterCoreError {
-  return new RouterCoreError("configuration", message, "jev_configuration_invalid", param);
-}
-
-function frameworkError(error: unknown): unknown {
-  if (!(error instanceof RouterCoreError)) return error;
-  const kind = error.kind === "selector_output" ? "policy" : error.kind;
-  return new RouterFrameworkError(kind, error.message, error.code, error.param, { cause: error });
-}
+const invalidResponse = invalidJevResponse;

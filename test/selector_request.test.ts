@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { buildSizedSelectorRequest } from "../src/selector_request.js";
+import { CUSTOM_RULES_PROMPT, SELECTOR_SYSTEM_PROMPT } from "../src/prompts.js";
+import { buildSelectorRequest, buildSizedSelectorRequest } from "../src/selector_request.js";
 import { selectorSafeMessages } from "../src/selector_input.js";
 import type { ChatMessage, RoutingCandidate } from "../src/types.js";
 
@@ -108,4 +109,25 @@ test("numbered selector image placeholders survive scrubbing", () => {
     { type: "image_url", image_url: { url: "<image 1>", detail: "high" } },
     { type: "image_url", image_url: { url: "<image omitted>" } },
   ]);
+});
+
+test("custom rules append the rules addendum to the shared selector prompt", () => {
+  const messages: ChatMessage[] = [{ role: "user", content: "hello" }];
+  const plain = buildSelectorRequest({ candidates: CANDIDATES, selectorModel: "selector/model", messages });
+  const custom = buildSelectorRequest({
+    candidates: CANDIDATES,
+    selectorModel: "selector/model",
+    messages,
+    customRules: [{ when: "planning", use: "openai/gpt-4.1-mini", thinking_level: null }],
+    defaultTarget: null,
+  });
+
+  expect(plain.selectorRequest.messages?.[0]?.content).toBe(SELECTOR_SYSTEM_PROMPT);
+  expect(custom.selectorRequest.messages?.[0]?.content).toBe(
+    `${SELECTOR_SYSTEM_PROMPT}\n\n${CUSTOM_RULES_PROMPT}`,
+  );
+  expect(custom.selectorInput).toMatchObject({
+    custom_rules: [{ when: "planning", use: "openai/gpt-4.1-mini", thinking_level: null }],
+    default_target: null,
+  });
 });

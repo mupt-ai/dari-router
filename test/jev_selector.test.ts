@@ -1,29 +1,20 @@
 import { afterEach, expect, test } from "bun:test";
 
 import {
-  createJevRouter,
-  createRouter,
-  RouterFrameworkError,
-  type RouterModel,
-} from "../src/index.js";
-import {
   anonymizeSelectorInput,
   assignAnonymousActions,
   type AnonymousActionSlot,
   type Rng,
 } from "../src/anonymous_actions.js";
+import { JevOutputError, resolveJevConfig } from "../src/jev_client.js";
 import {
   buildJevSelectorRequest,
-  createJevSelector,
-  JevSelectorOutputError,
   parseJevSelectorResponse,
-  resolveJevSelectorConfig,
   selectWithJev,
   type JevSystemOneRequest,
 } from "../src/jev_selector.js";
 import { buildSelectorRequest } from "../src/selector_request.js";
 import type { SelectorInput } from "../src/selector_input.js";
-import { RouterCoreError } from "../src/errors.js";
 import type { RouterEval, RoutingCandidate } from "../src/types.js";
 
 const SOL = "openai/gpt-5.6-sol";
@@ -49,6 +40,8 @@ const EVALS: RouterEval[] = [
     ],
   },
 ];
+
+const CONFIG = { ...resolveJevConfig({ apiKey: "ts-key" }), leaseTurns: [5, 10, 30] };
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -155,22 +148,6 @@ function jevAnswer(
   };
 }
 
-test("resolveJevSelectorConfig validates the API key, endpoint, and lease menu", () => {
-  expect(() => resolveJevSelectorConfig({ apiKey: " " })).toThrow("requires an apiKey");
-  expect(() => resolveJevSelectorConfig({ apiKey: "k", endpoint: "not a url" })).toThrow(
-    "must be a valid URL",
-  );
-  expect(() =>
-    resolveJevSelectorConfig({ apiKey: "k", endpoint: "https://user:pw@api.typesafe.ai/v1" }),
-  ).toThrow("without embedded credentials");
-  expect(() => resolveJevSelectorConfig({ apiKey: "k", leaseTurns: [10, 5] })).toThrow(
-    "ascending positive integers",
-  );
-  const resolved = resolveJevSelectorConfig({ apiKey: "k", endpoint: "https://api.typesafe.ai/v1/" });
-  expect(resolved.endpoint).toBe("https://api.typesafe.ai/v1");
-  expect(resolved.model).toBe("jev-latest");
-  expect(resolved.leaseTurns).toEqual([5, 10, 30]);
-});
 
 test("renders the anonymized input as a Jev state with action and lease choices", () => {
   const anonymous = anonymizeSelectorInput(selectorInput() as never, slots());
@@ -237,14 +214,29 @@ test("omits the lease question when no menu is offered", () => {
   expect(request.questions.lease).toBeUndefined();
 });
 
-test("selectWithJev rejects custom-rule selector inputs", async () => {
-  const custom = { ...selectorInput(), custom_rules: [], default_target: null };
-  const error = await selectWithJev(
-    custom,
-    slots(),
-    resolveJevSelectorConfig({ apiKey: "k" }),
-  ).catch((caught: unknown) => caught);
-  expect(error).toBeInstanceOf(RouterCoreError);
+test("puts a custom router's rules, as actions, into the action question", async () => {
+  let body: JevSystemOneRequest | undefined;
+  const chosen = actionFor(CANDIDATES[0]!);
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body));
+    return Response.json(jevAnswer(chosen, "10"));
+  }) as typeof fetch;
+  const custom = {
+    ...selectorInput(),
+    custom_rules: [{ when: "planning", use: SOL, thinking_level: null }],
+    default_target: { model: FLASH, thinking_level: "high" as const },
+  };
+
+  const { decision } = await selectWithJev(custom, slots(), CONFIG);
+
+  const instructions = body!.questions.action.instructions as Record<string, unknown>;
+  expect(instructions.router_rules).toEqual({
+    rules: [{ when: "planning", actions: [actionFor(CANDIDATES[0]!)] }],
+    default_actions: [actionFor(CANDIDATES[2]!)],
+  });
+  expect(JSON.stringify(instructions.rules)).toContain("router_rules");
+  expect(JSON.stringify(body)).not.toContain(SOL);
+  expect(decision.selectedModel).toBe(SOL);
 });
 
 test("maps the Jev answers onto the slots as a leased, anonymous decision", () => {
@@ -270,10 +262,10 @@ test("rejects answers outside the slots or the lease menu", () => {
   ).toThrow("outside this router's candidates");
   try {
     parseJevSelectorResponse(jevAnswer("D", "10"), { slots: slots(), leaseTurns: [5, 10, 30] });
-    throw new Error("expected JevSelectorOutputError");
+    throw new Error("expected JevOutputError");
   } catch (error) {
-    expect(error).toBeInstanceOf(JevSelectorOutputError);
-    expect((error as JevSelectorOutputError).usage).toEqual({
+    expect(error).toBeInstanceOf(JevOutputError);
+    expect((error as JevOutputError).usage).toEqual({
       input_tokens: 1_000,
       output_tokens: 40,
     });
@@ -298,26 +290,20 @@ test("rejects answers outside the slots or the lease menu", () => {
   ).toThrow("missing token usage");
 });
 
-test("createJevSelector posts an anonymized request and returns a routing_decision document", async () => {
+
+test("selectWithJev posts an anonymized request and maps the answers back", async () => {
   let captured: { url: string; auth: string | null; body: JevSystemOneRequest } | undefined;
+  const chosen = actionFor(CANDIDATES[1]!);
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     captured = {
       url: String(input),
       auth: new Headers(init?.headers).get("authorization"),
       body: JSON.parse(String(init?.body)),
     };
-    // Whatever letters this call's rng drew, answer with an offered action.
-    const offered = Object.keys(captured.body.questions.action.criteria);
-    return Response.json(jevAnswerFor(offered, offered[0]!, "30"));
+    return Response.json(jevAnswer(chosen, "30"));
   }) as typeof fetch;
 
-  const selector = createJevSelector({ apiKey: "ts-key" });
-  const { selectorRequest } = buildSelectorRequest({
-    candidates: CANDIDATES,
-    selectorModel: "typesafe/jev-latest",
-    messages: [{ role: "user", content: "hello" }],
-  });
-  const output = JSON.parse(await selector.select(selectorRequest));
+  const { decision, response } = await selectWithJev(selectorInput(), slots(), CONFIG);
 
   expect(captured?.url).toBe("https://api.typesafe.ai/v1/systemone");
   expect(captured?.auth).toBe("Bearer ts-key");
@@ -325,164 +311,7 @@ test("createJevSelector posts an anonymized request and returns a routing_decisi
   for (const model of [SOL, SONNET, FLASH]) {
     expect(JSON.stringify(captured?.body)).not.toContain(model);
   }
-  expect(output.jev).toMatchObject({ model: "jev-1.13.0" });
-  expect(CANDIDATES.map((candidate) => candidate.model)).toContain(output.selected_model);
-  expect(output.reason).toMatch(/^Jev selected Action [A-Z]+ /);
-  expect(output.lease_turns_remaining).toBe(29);
+  expect(decision.selectedModel).toBe(SONNET);
+  expect(decision.leaseTurnsRemaining).toBe(29);
+  expect(response.model).toBe("jev-1.13.0");
 });
-
-test("createJevSelector answers a single candidate without calling Jev", async () => {
-  globalThis.fetch = (async (_input: RequestInfo | URL): Promise<Response> => {
-    throw new Error("must not call Jev");
-  }) as typeof fetch;
-  const selector = createJevSelector({ apiKey: "ts-key" });
-  const { selectorRequest } = buildSelectorRequest({
-    candidates: [CANDIDATES[0]!],
-    selectorModel: "typesafe/jev-latest",
-    messages: [{ role: "user", content: "hello" }],
-  });
-  const output = JSON.parse(await selector.select(selectorRequest));
-  expect(output).toEqual({
-    selected_model: SOL,
-    reasoning_effort: "high",
-    reason: "The router has only one compatible model/thinking-level pair.",
-  });
-});
-
-test("createJevSelector retries once on rate limits and surfaces other HTTP errors", async () => {
-  const statuses = [429, 200];
-  let calls = 0;
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    calls += 1;
-    const status = statuses.shift()!;
-    if (status !== 200) {
-      return new Response("slow down", { status, headers: { "retry-after": "0" } });
-    }
-    const body = JSON.parse(String(init?.body)) as JevSystemOneRequest;
-    const offered = Object.keys(body.questions.action.criteria);
-    return Response.json(jevAnswerFor(offered, offered[0]!, "5"));
-  }) as typeof fetch;
-  const selector = createJevSelector({ apiKey: "ts-key" });
-  const { selectorRequest } = buildSelectorRequest({
-    candidates: CANDIDATES,
-    selectorModel: "typesafe/jev-latest",
-    messages: [{ role: "user", content: "hello" }],
-  });
-  const output = JSON.parse(await selector.select(selectorRequest));
-  expect(calls).toBe(2);
-  expect(CANDIDATES.map((candidate) => candidate.model)).toContain(output.selected_model);
-
-  globalThis.fetch = (async (_input: RequestInfo | URL) =>
-    new Response("bad key", { status: 401 })) as typeof fetch;
-  const error = await selector.select(selectorRequest).catch((caught: unknown) => caught);
-  expect(error).toBeInstanceOf(RouterFrameworkError);
-  expect((error as RouterFrameworkError).code).toBe("jev_http_error");
-  expect((error as RouterFrameworkError).message).toContain("401");
-});
-
-const MODELS: RouterModel[] = [
-  {
-    id: SOL,
-    executor: "mock",
-    api: "openai-responses",
-    reasoningEfforts: ["high"],
-    capabilities: { imageInput: true, toolUse: true },
-  },
-  {
-    id: SONNET,
-    executor: "mock",
-    api: "anthropic-messages",
-    reasoningEfforts: ["medium"],
-    capabilities: { imageInput: true, toolUse: true },
-  },
-];
-
-const PRICING = {
-  [SOL]: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  [SONNET]: { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 1.9 },
-};
-
-const COST_OPTIONS = {
-  pricing: (model: string) => PRICING[model as keyof typeof PRICING] ?? null,
-  averageOutputTokensByModel: {
-    [SOL]: { high: 800 },
-    [SONNET]: { medium: 800 },
-  },
-};
-
-test("createJevRouter routes through Jev and holds the lease it granted", async () => {
-  let policyCalls = 0;
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    policyCalls += 1;
-    const body = JSON.parse(String(init?.body)) as JevSystemOneRequest;
-    const offered = Object.keys(body.questions.action.criteria);
-    return Response.json(jevAnswerFor(offered, offered[0]!, "5"));
-  }) as typeof fetch;
-
-  const router = createRouter({
-    models: MODELS,
-    policy: createJevRouter({ apiKey: "ts-key", ...COST_OPTIONS }),
-    executors: {
-      mock: {
-        execute: ({ model }) => ({
-          type: "complete",
-          output: { content: [{ type: "text", text: model.id }], finishReason: "stop" },
-        }),
-      },
-    },
-  });
-  const body = {
-    model: "dari/routing",
-    messages: [{ role: "user", content: "hello" }],
-    prompt_cache_key: "conversation-1",
-  };
-  const request = () =>
-    new Request("https://test.test/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-  const first = await router.fetch(request());
-  expect(first.status).toBe(200);
-  const served = first.headers.get("X-Router-Selected-Model")!;
-  expect([SOL, SONNET]).toContain(served);
-  expect(policyCalls).toBe(1);
-  const second = await router.fetch(request());
-  expect(second.headers.get("X-Router-Selected-Model")).toBe(served);
-  expect(policyCalls).toBe(1);
-});
-
-test("createJevRouter requires an API key and host-owned accounting", () => {
-  expect(() => createJevRouter({ apiKey: "", ...COST_OPTIONS })).toThrow(RouterCoreError);
-  expect(() => createJevRouter({ apiKey: "ts-key" } as never)).toThrow(RouterFrameworkError);
-});
-
-// Like jevAnswer, but for a request whose letter permutation was drawn by a
-// different rng than the test fixture's.
-function jevAnswerFor(
-  offered: readonly string[],
-  action: string,
-  lease: string,
-): Record<string, unknown> {
-  return {
-    model: "jev-1.13.0",
-    answers: {
-      action: {
-        type: "choice",
-        choice: action,
-        confidence: 0.8,
-        probabilities: Object.fromEntries(
-          offered.map((entry) => [entry, entry === action ? 0.9 : 0.1 / (offered.length - 1)]),
-        ),
-      },
-      lease: {
-        type: "choice",
-        choice: lease,
-        confidence: 0.7,
-        probabilities: { "5": 0.8, "10": 0.1, "30": 0.1 },
-      },
-    },
-    usage: { input_tokens: 300, output_tokens: 30 },
-  };
-}

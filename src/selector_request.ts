@@ -1,5 +1,5 @@
 import { RouterCoreError } from "./errors.js";
-import { CUSTOM_SELECTOR_SYSTEM_PROMPT, SELECTOR_SYSTEM_PROMPT } from "./prompts.js";
+import { CUSTOM_RULES_PROMPT, SELECTOR_SYSTEM_PROMPT } from "./prompts.js";
 import {
   buildSelectorInput,
   type CustomSelectorInput,
@@ -113,7 +113,12 @@ export function buildSelectorRequest(args: SelectorRequestArgs): BuiltSelectorRe
     selectorRequest: {
       model: args.selectorModel,
       messages: [
-        { role: "system", content: isCustom ? CUSTOM_SELECTOR_SYSTEM_PROMPT : SELECTOR_SYSTEM_PROMPT },
+        {
+          role: "system",
+          content: isCustom
+            ? `${SELECTOR_SYSTEM_PROMPT}\n\n${CUSTOM_RULES_PROMPT}`
+            : SELECTOR_SYSTEM_PROMPT,
+        },
         {
           role: "user",
           content: JSON.stringify(selectorInput),

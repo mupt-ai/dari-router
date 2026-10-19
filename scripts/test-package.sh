@@ -39,4 +39,22 @@ if (resolved?.score !== 60 || !resolved.imputed) {
 }
 EOF
 
+# Prompts load from files next to the compiled modules; the packed package
+# must ship them.
+node --input-type=module <<'EOF'
+import {
+  buildJevEvalRelevanceRequest,
+  SELECTOR_SYSTEM_PROMPT,
+} from "@mupt-ai/dari-router/policy-engine";
+
+const request = buildJevEvalRelevanceRequest(
+  [{ id: "e", name: "n", min_score: 0, max_score: 1, scores: [] }],
+  { task: null, conversation: [] },
+  "jev-latest",
+);
+if (!request.questions.e.instructions.question || !SELECTOR_SYSTEM_PROMPT) {
+  throw new Error("Prompt files are missing from the packed package");
+}
+EOF
+
 test ! -e node_modules/@mupt-ai/pi-ai

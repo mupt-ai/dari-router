@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 
 import type { ReasoningCacheScopeLookup } from "./cache_scope.js";
 import { FIXED_TURN_COST_COMPARISON_TURNS } from "./fixed_turn_cost_config.js";
-import { ANONYMOUS_ACTION_SYSTEM_PROMPT } from "./prompts.js";
+import { ANONYMOUS_ACTION_SYSTEM_PROMPT, ANONYMOUS_RULES_PROMPT } from "./prompts.js";
 import {
   jsonRecord,
   jsonValue,
@@ -100,6 +100,14 @@ export type AnonymousLeaseHistoryEntry = {
   } | null;
 };
 
+// A custom router's rules with each target rewritten into the actions it
+// allows: a pinned thinking level is one action, Auto is every action of
+// that model.
+export type AnonymousRouterRules = {
+  rules: Array<{ when: string; actions: string[] }>;
+  default_actions: string[] | null;
+};
+
 export type AnonymousSelectorInput = {
   candidate_actions: Array<{ action: string }>;
   imported_evals: AnonymousEvalCard[];
@@ -107,6 +115,8 @@ export type AnonymousSelectorInput = {
   cost_estimates: AnonymousActionCost[];
   lease_history: AnonymousLeaseHistoryEntry[];
   messages: JsonValue;
+  // Present only for routers with custom rules.
+  router_rules?: AnonymousRouterRules;
 };
 
 // Shuffles candidates into spreadsheet-style action slots A..Z, AA..AZ, ...
@@ -206,20 +216,74 @@ export function anonymizeSelectorInput(
     cost_estimates: anonymizeCosts(input["cost_estimates"], byCandidate),
     lease_history: anonymizeLeaseHistory(input["lease_history"], byCandidate),
     messages: jsonValue(input["messages"], "selector input messages"),
+    ...(Array.isArray(input["custom_rules"])
+      ? { router_rules: anonymizeRouterRules(input["custom_rules"], input["default_target"], slots) }
+      : {}),
   };
+}
+
+function anonymizeRouterRules(
+  customRules: JsonValue[],
+  defaultTarget: JsonValue | undefined,
+  slots: readonly AnonymousActionSlot[],
+): AnonymousRouterRules {
+  const actionsFor = (model: string, thinkingLevel: JsonValue | undefined) =>
+    slots
+      .filter((slot) =>
+        slot.candidate.model === model
+        && (thinkingLevel === null || thinkingLevel === undefined
+          || slot.candidate.reasoningEffort === thinkingLevel)
+      )
+      .map((slot) => slot.action);
+  const rules = customRules.flatMap((value, index) => {
+    const rule = jsonRecord(value, `custom_rules[${index}]`);
+    const actions = actionsFor(
+      requiredString(rule["use"], `custom_rules[${index}].use`),
+      rule["thinking_level"],
+    );
+    return actions.length === 0
+      ? []
+      : [{ when: requiredString(rule["when"], `custom_rules[${index}].when`), actions }];
+  });
+  let defaultActions: string[] | null = null;
+  if (defaultTarget !== null && defaultTarget !== undefined) {
+    const target = jsonRecord(defaultTarget, "default_target");
+    const actions = actionsFor(
+      requiredString(target["model"], "default_target.model"),
+      target["thinking_level"],
+    );
+    defaultActions = actions.length === 0 ? null : actions;
+  }
+  return { rules, default_actions: defaultActions };
 }
 
 export function buildAnonymousPolicyPrompt(
   anonymousSelectorInput: AnonymousSelectorInput,
   slots: readonly AnonymousActionSlot[],
 ): AnonymousPolicyPrompt {
+  // Rules are static per router, so they ride in the system prompt and the
+  // conversation-last user message keeps its shared prefix.
+  const rules = anonymousSelectorInput.router_rules;
   return {
     messages: [
-      { role: "system", content: ANONYMOUS_ACTION_SYSTEM_PROMPT },
+      {
+        role: "system",
+        content: rules === undefined
+          ? ANONYMOUS_ACTION_SYSTEM_PROMPT
+          : `${ANONYMOUS_ACTION_SYSTEM_PROMPT}\n\n${ANONYMOUS_RULES_PROMPT}\n${formatRouterRules(rules)}`,
+      },
       { role: "user", content: formatAnonymousPolicyInput(anonymousSelectorInput) },
     ],
     actions: slots.map((slot) => slot.action),
   };
+}
+
+export function formatRouterRules(rules: AnonymousRouterRules): string {
+  const actionList = (actions: readonly string[]) =>
+    actions.map((action) => `Action ${action}`).join(", ");
+  const lines = rules.rules.map((rule) => `- When ${JSON.stringify(rule.when)}: ${actionList(rule.actions)}`);
+  if (rules.default_actions !== null) lines.push(`- Default: ${actionList(rules.default_actions)}`);
+  return section("router_rules", lines.join("\n"));
 }
 
 // The answer format a lease-trained policy learned, stating its lease menu: a
