@@ -28,6 +28,7 @@ const PREVIOUS_GENERATION: Readonly<Record<string, string>> = {
   "openai/gpt-6-sol": "openai/gpt-5.6-sol",
   "openai/gpt-6-luna": "openai/gpt-5.6-luna",
   "anthropic/claude-opus-5-5": "anthropic/claude-opus-5",
+  "anthropic/claude-sonnet-5-5": "anthropic/claude-sonnet-5",
   "anthropic/claude-fable-5-1": "anthropic/claude-fable-5",
   "meta/muse-spark-1.3": "meta/muse-spark-1.2",
   "zai-org/GLM-5.3": "zai-org/GLM-5.2",
