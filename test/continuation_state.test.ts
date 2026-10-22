@@ -82,6 +82,18 @@ test("compatibleProviderContinuation only replays to the same provider api", () 
   expect(compatibleProviderContinuation(openai, { ...OPENAI_SOURCE, api: "openai-completions" })).toBeNull();
 });
 
+test("ChatGPT-subscription Codex reasoning replays to its own Responses transport only", () => {
+  const codexSource = { provider: "openai-codex", api: "openai-codex-responses", model: "openai/gpt-5.6-luna" };
+  const codex: ProviderContinuationState = {
+    kind: "openai_reasoning",
+    source: codexSource,
+    encryptedContent: "x",
+  };
+  expect(compatibleProviderContinuation(codex, codexSource)).toEqual(codex);
+  expect(compatibleProviderContinuation(codex, OPENAI_SOURCE)).toBeNull();
+  expect(compatibleProviderContinuation(codex, { ...codexSource, api: "openai-completions" })).toBeNull();
+});
+
 test("Bedrock-sourced Anthropic thinking replays to the same Bedrock identity only", () => {
   const bedrockSource = {
     provider: "amazon-bedrock",

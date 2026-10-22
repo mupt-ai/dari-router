@@ -111,13 +111,19 @@ export function isOpenAIResponsesApi(api: string): boolean {
   return api === "openai-responses" || api === "azure-openai-responses";
 }
 
+// OpenAI reasoning continuations also replay on the ChatGPT-subscription Codex
+// Responses transport, which returns the same encrypted reasoning items.
+export function isOpenAIReasoningContinuationApi(api: string): boolean {
+  return isOpenAIResponsesApi(api) || api === "openai-codex-responses";
+}
+
 export function compatibleProviderContinuation(
   continuation: ProviderContinuationState | undefined,
   target: ProviderIdentity | null,
 ): ProviderContinuationState | null {
   if (!continuation || !target || !sameProviderIdentity(continuation.source, target)) return null;
   if (continuation.kind === "openai_reasoning") {
-    return isOpenAIResponsesApi(target.api) ? continuation : null;
+    return isOpenAIReasoningContinuationApi(target.api) ? continuation : null;
   }
   // Anthropic thinking signatures also round-trip through Bedrock's Converse
   // Stream transport (Claude on Bedrock rejects replayed thinking without its

@@ -9,7 +9,7 @@ import { RouterFrameworkError } from "./framework_error.js";
 import { decodeOpenAIReasoningSignature } from "./pi_reasoning_signature.js";
 import { isRecord } from "./types.js";
 import {
-  isOpenAIResponsesApi,
+  isOpenAIReasoningContinuationApi,
   type ProviderContinuationState,
   type ProviderIdentity,
 } from "./continuation_state.js";
@@ -314,7 +314,7 @@ function routerReasoning(
     ? part.thinkingSignature
     : undefined;
   let continuation: ProviderContinuationState | undefined;
-  if (isOpenAIResponsesApi(source.api) && signature) {
+  if (isOpenAIReasoningContinuationApi(source.api) && signature) {
     const native = decodeOpenAIReasoningSignature(signature);
     if (native?.encryptedContent) {
       continuation = {
