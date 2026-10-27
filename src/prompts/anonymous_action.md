@@ -20,7 +20,7 @@
 - Switching changes the model, not the available conversation: the selected model will ALWAYS receives the context above. 
 - Cache warmth affects cost and latency only. 
 - Changing thinking level within a letter keeps the cache warm; switching to another letter may start cold, while switching back may reuse a warm cache. 
-- Since prompts grow, cold starts can cost more later. The displayed cost already reflects current cache warmth, averaged over the next {{comparison_turns}} turns; use it rather than assuming a fixed switch penalty.
+- Since prompts grow, cold starts can cost more later. Each action shows its cold start cost (paid on the first turn if its cache is cold) and its per turn cost once warm; use them rather than assuming a fixed switch penalty.
 
 # Decide
 Finish successfully at the lowest total cost. Weigh capability, progress, task phase, benchmark scores, per-turn cost, and $/task. Choose a lease appropriate to how long the action should remain suitable—not just to preserve cache. Switch when its likely capability or progress benefit justifies the estimated cost and latency; do not stay with an unsuitable action for cache warmth.

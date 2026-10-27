@@ -43,6 +43,7 @@ function estimate(
         : {
             output_tokens_per_turn: 1000,
             assumed_reasoning_effort: effort,
+            cold_start_usd: 0,
             projections: [
               {
                 projected_turns: FIXED_TURN_COST_COMPARISON_TURNS,

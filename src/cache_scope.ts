@@ -14,7 +14,9 @@ export type ReasoningCacheScope = "effort_keyed" | "shared";
 // Luna explicitly preserve prompt-cache identity across effort changes, so
 // their first-party OpenAI partitions are shared. Anthropic models are effort_keyed
 // because pi-ai places cache_control on message blocks, which Anthropic
-// invalidates on thinking changes; budget-thinking Haiku would share under a
+// invalidates on thinking changes; Opus 5.5 is the exception, since it supports
+// mid-conversation effort changes without invalidating the prefix cache.
+// Budget-thinking Haiku would share under a
 // system-block breakpoint, so revalidate its entry if pi-ai's Anthropic cache
 // placement changes. Fireworks caching ignored reasoning entirely.
 // Unlisted models default to effort_keyed: the safe direction is to
@@ -27,6 +29,7 @@ export const DEFAULT_REASONING_CACHE_SCOPES: Readonly<Record<string, ReasoningCa
   "openai:openai/gpt-5.6-terra": "effort_keyed",
   "openai:openai/gpt-5.6-luna": "effort_keyed",
   "anthropic:anthropic/claude-opus-4-8": "effort_keyed",
+  "anthropic:anthropic/claude-opus-5-5": "shared",
   "anthropic:anthropic/claude-haiku-4-5": "effort_keyed", // via pi-ai message-block cache_control; see note above
   "fireworks:deepseek-ai/DeepSeek-V4-Pro-0813": "shared",
   "fireworks:deepseek-ai/DeepSeek-V4-Flash-0731": "shared",

@@ -165,6 +165,21 @@ function expectedOpenAiFixedTurnCost(args: {
   return expected;
 }
 
+test("fixed-turn estimates carry the first turn alone, below every projection", () => {
+  const [sonnet, gpt] = estimates({});
+  for (const candidate of [sonnet, gpt]) {
+    const estimate = candidate.fixed_turn_cost_estimate;
+    expect(estimate).not.toBeNull();
+    expect(estimate!.cold_start_usd).toBeGreaterThan(0);
+    // The first turn is one term of the cumulative loop, so it cannot exceed
+    // the shortest projection, and the rest of the loop is what the
+    // per-turn average spreads out.
+    expect(estimate!.cold_start_usd).toBeLessThan(
+      estimate!.projections[0]!.total_cost_usd,
+    );
+  }
+});
+
 test("warm anthropic candidate pays read on prefix and write on tail", () => {
   const [sonnet, gpt] = estimates({});
   // 4000 chars / 4 = 1000 new tokens; prefix 2000 warm.

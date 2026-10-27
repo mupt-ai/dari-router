@@ -369,64 +369,72 @@ function fixedTurnCostEstimate(args: {
   outputTokens?: number;
   promptGrowthTokensPerTurn: number;
 }): FixedTurnCostEstimate | null {
-  const provider = promptCacheProviderForModel(args.model, args.provider);
   if (args.outputTokens === undefined) return null;
-
-  // One pass to the longest horizon, snapshotting the running total at each
-  // shorter one: turn N's cost depends on every turn before it, so the
-  // horizons are prefixes of the same accumulation rather than separate runs.
-  const horizons: number[] = [...FIXED_TURN_COST_PROJECTED_TURNS].sort(
-    (left, right) => left - right,
-  );
-  const longestHorizon = horizons[horizons.length - 1] ?? 0;
-  const projections: TurnCostProjection[] = [];
+  const provider = promptCacheProviderForModel(args.model, args.provider);
   const outputTokens = args.outputTokens;
   // Each turn's prompt carries the previous reply and the tool results it
   // triggered, so it grows by at least the reply.
   const growthTokens = Math.max(outputTokens, args.promptGrowthTokensPerTurn);
+
+  // One pass to the longest horizon, snapshotting the running total at each
+  // shorter one: turn N's cost depends on every turn before it.
+  const horizons: number[] = [...FIXED_TURN_COST_PROJECTED_TURNS].sort((left, right) => left - right);
+  const longestHorizon = horizons[horizons.length - 1] ?? 0;
+  const projections: TurnCostProjection[] = [];
   let totalCost = 0;
 
   for (let turn = 1; turn <= longestHorizon; turn += 1) {
     const inputTokens = args.estPromptTokens + (turn - 1) * growthTokens;
     const price = pricingForPrompt(args.price, inputTokens);
-    // Cache modeling refines a projection; it must not gate its existence.
-    // Without a known cache policy, assume no reads or writes and charge
-    // ordinary input/output rates rather than inventing a hit probability.
-    totalCost +=
-      provider === null
-        ? (inputTokens * price.input + outputTokens * price.output) / MTOK
-        : turn === 1
-          ? deterministicTurnCost({
-              model: args.model,
-              price,
-              inputTokens,
-              cachedTokens: args.warmTokens,
-              outputTokens,
-              provider,
-            })
-          : laterTurnCost({
-              model: args.model,
-              price,
-              provider,
-              inputTokens,
-              // Later requests can only read prefixes that appeared in prior
-              // request inputs. The previous turn's reply and tool results are
-              // fresh on the next request.
-              reusablePrefix: args.estPromptTokens + (turn - 2) * growthTokens,
-              outputTokens,
-            });
+    if (turn === 1) {
+      // The first turn reads whatever prefix is warm now.
+      totalCost += turnCostUsd({
+        model: args.model, price, inputTokens, outputTokens, provider,
+        cachedTokens: args.warmTokens,
+      });
+    } else if (provider === null) {
+      totalCost += turnCostUsd({
+        model: args.model, price, inputTokens, outputTokens, provider,
+        cachedTokens: 0,
+      });
+    } else {
+      totalCost += laterTurnCost({
+        model: args.model,
+        price,
+        provider,
+        inputTokens,
+        // Later requests can only read prefixes that appeared in prior
+        // request inputs. The previous turn's reply and tool results are
+        // fresh on the next request.
+        reusablePrefix: args.estPromptTokens + (turn - 2) * growthTokens,
+        outputTokens,
+      });
+    }
     if (horizons.includes(turn)) {
       projections.push({ projected_turns: turn, total_cost_usd: totalCost });
     }
   }
 
+  // The switch cost: the first turn with nothing cached.
+  const coldStartUsd = turnCostUsd({
+    model: args.model,
+    price: pricingForPrompt(args.price, args.estPromptTokens),
+    inputTokens: args.estPromptTokens,
+    outputTokens,
+    provider,
+    cachedTokens: 0,
+  });
+
   return {
     output_tokens_per_turn: outputTokens,
     assumed_reasoning_effort: args.reasoningEffort,
+    cold_start_usd: coldStartUsd,
     projections,
   };
 }
 
+// Expected cost of a turn after the first: a cache hit on the reusable prefix
+// weighted by the provider's hit probability, otherwise a miss.
 function laterTurnCost(args: {
   model: string;
   price: ModelPricing;
@@ -440,23 +448,23 @@ function laterTurnCost(args: {
     args.provider,
     args.reusablePrefix,
   );
-  const missCost = deterministicTurnCost({
+  const missCost = turnCostUsd({
     model: args.model,
     price: args.price,
     inputTokens: args.inputTokens,
-    cachedTokens: 0,
     outputTokens: args.outputTokens,
     provider: args.provider,
+    cachedTokens: 0,
   });
   if (cacheableTokens <= 0) return missCost;
 
-  const hitCost = deterministicTurnCost({
+  const hitCost = turnCostUsd({
     model: args.model,
     price: args.price,
     inputTokens: args.inputTokens,
-    cachedTokens: cacheableTokens,
     outputTokens: args.outputTokens,
     provider: args.provider,
+    cachedTokens: cacheableTokens,
   });
   const hitProbability = FIXED_TURN_CACHE_HIT_PROBABILITY[args.provider];
   return hitCost * hitProbability + missCost * (1 - hitProbability);
@@ -488,14 +496,20 @@ function freshInputRate(
     : price.input;
 }
 
-function deterministicTurnCost(args: {
+// Price one turn with `cachedTokens` of its prompt read from cache. Without a
+// known cache policy, assume no reads or writes and charge ordinary rates
+// rather than inventing a hit probability.
+function turnCostUsd(args: {
   model: string;
   price: ModelPricing;
   inputTokens: number;
   cachedTokens: number;
   outputTokens: number;
-  provider?: string;
+  provider: PromptCacheProvider | null;
 }): number {
+  if (args.provider === null) {
+    return (args.inputTokens * args.price.input + args.outputTokens * args.price.output) / MTOK;
+  }
   const freshTokens = args.inputTokens - args.cachedTokens;
   return (
     (args.cachedTokens * args.price.cacheRead) / MTOK +

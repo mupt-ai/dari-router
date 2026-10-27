@@ -51,7 +51,8 @@ for (const provider of [undefined, "xai", "openrouter", "azure", "custom-provide
       }, slots);
       expect(anonymous.cost_estimates).toHaveLength(candidates.length);
       const prompt = buildAnonymousPolicyPrompt(anonymous, slots).messages[1].content;
-      expect(prompt.match(/- Cost:/g)).toHaveLength(candidates.length);
+      expect(prompt.match(/- Cold start cost:/g)).toHaveLength(candidates.length);
+      expect(prompt.match(/- Per turn cost:/g)).toHaveLength(candidates.length);
     });
   }
 }

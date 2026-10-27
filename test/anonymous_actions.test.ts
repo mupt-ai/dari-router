@@ -90,6 +90,7 @@ function selectorInput(): JsonObject {
         fixed_turn_cost_estimate: {
           output_tokens_per_turn: 700,
           assumed_reasoning_effort: "low",
+          cold_start_usd: 0.006,
           projections: [
             { projected_turns: 1, total_cost_usd: 0.006 },
             { projected_turns: 10, total_cost_usd: 0.0432 },
@@ -104,6 +105,7 @@ function selectorInput(): JsonObject {
         fixed_turn_cost_estimate: {
           output_tokens_per_turn: 700,
           assumed_reasoning_effort: "high",
+          cold_start_usd: 0.02,
           projections: [
             { projected_turns: 1, total_cost_usd: 0.02 },
             { projected_turns: 10, total_cost_usd: 0.191 },
@@ -200,11 +202,13 @@ test("renders raw benchmark scores on the benchmark's own scale by default", () 
     "<benchmarks>\n- SWE-bench (scale 0–3000, higher is better): Coding reliability\n</benchmarks>",
   );
   expect(block(serialized, actionFor(slots, CHEAP))).toEqual([
-    "- Cost: $0.00432/turn",
+    "- Cold start cost: $0.006",
+    "- Per turn cost: $0.00563",
     "- SWE-bench: Score 1210.5",
   ]);
   expect(block(serialized, actionFor(slots, STRONG))).toEqual([
-    "- Cost: $0.0191/turn",
+    "- Cold start cost: $0.02",
+    "- Per turn cost: $0.0245",
     "- SWE-bench: Score 1450",
   ]);
   expect(block(serialized, actionFor(slots, MEDIUM))).toEqual([

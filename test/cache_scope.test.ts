@@ -22,6 +22,7 @@ test("partition keys follow the provider's reasoning cache scope", () => {
 
   // GPT-6 Sol variants share first-party OpenAI cache identity across efforts.
   expect(reasoningCacheScope(GPT_6_1_SOL, "openai")).toBe("shared");
+  expect(reasoningCacheScope("anthropic/claude-opus-5-5", "anthropic")).toBe("shared");
   expect(reasoningCacheScope(GPT_6_SOL, "openai")).toBe("shared");
   expect(reasoningCacheScope(GPT_6_LUNA, "openai")).toBe("shared");
   expect(cachePartitionKey(GPT_6_SOL, "low", undefined, "openai")).toBe(

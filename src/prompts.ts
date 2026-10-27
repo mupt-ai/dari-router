@@ -6,7 +6,6 @@
 import { readFileSync } from "node:fs";
 
 import {
-  FIXED_TURN_COST_COMPARISON_TURNS,
   FIXED_TURN_COST_PROJECTED_TURNS,
 } from "./fixed_turn_cost_config.js";
 
@@ -14,7 +13,6 @@ import {
 // the wording cannot drift from the config that produces the data.
 const PROMPT_VARIABLES: Record<string, string> = {
   projected_turns: FIXED_TURN_COST_PROJECTED_TURNS.join(", "),
-  comparison_turns: String(FIXED_TURN_COST_COMPARISON_TURNS),
 };
 
 function loadPrompt(name: string): string {

@@ -77,6 +77,7 @@ export type AnonymousEvalCard = {
 
 export type AnonymousActionCost = {
   action: string;
+  cold_start_usd: number;
   projections: TurnCostProjection[];
 };
 
@@ -378,7 +379,7 @@ function section(name: string, body: string): string {
 function candidateBlock(action: string, input: AnonymousSelectorInput): string {
   const cost = input.cost_estimates.find((entry) => entry.action === action);
   const lines = [`## Action ${action}`];
-  if (cost !== undefined) lines.push(costLine(cost));
+  if (cost !== undefined) lines.push(...costLines(cost));
   for (const card of input.imported_evals) {
     const score = card.scores.find((entry) => entry.action === action);
     if (score !== undefined) {
@@ -398,13 +399,23 @@ function rawScore(value: number): string {
   return value.toFixed(2).replace(/\.?0+$/, "");
 }
 
-// One number per action: the average spend per turn over the comparison
-// horizon, so a cold start on switching is spread over the turns it serves.
-function costLine(cost: AnonymousActionCost): string {
-  const projection =
-    cost.projections.find((entry) => entry.projected_turns === FIXED_TURN_COST_COMPARISON_TURNS) ??
-    cost.projections[cost.projections.length - 1]!;
-  return `- Cost: ${usd(projection.total_cost_usd / projection.projected_turns)}/turn`;
+// Two numbers per action. The cold start is what switching to it costs before
+// its cache is warm. The per turn cost is the steady spend once it is warm,
+// taken from the turns between the comparison horizon and the longest one so
+// the cold start does not leak into it.
+function costLines(cost: AnonymousActionCost): string[] {
+  const at = (turns: number) =>
+    cost.projections.find((entry) => entry.projected_turns === turns);
+  const comparison = at(FIXED_TURN_COST_COMPARISON_TURNS);
+  const longest = cost.projections[cost.projections.length - 1]!;
+  const warmTurns = longest.projected_turns - FIXED_TURN_COST_COMPARISON_TURNS;
+  const perTurn = comparison === undefined || warmTurns <= 0
+    ? longest.total_cost_usd / longest.projected_turns
+    : (longest.total_cost_usd - comparison.total_cost_usd) / warmTurns;
+  return [
+    `- Cold start cost: ${usd(cost.cold_start_usd)}`,
+    `- Per turn cost: ${usd(perTurn)}`,
+  ];
 }
 
 function usd(value: number): string {
@@ -676,6 +687,7 @@ function anonymizeCosts(
     return [
       {
         action,
+        cold_start_usd: requiredNumber(fixedTurn["cold_start_usd"], `${label}.fixed_turn_cost_estimate.cold_start_usd`),
         projections: fixedTurn["projections"].map((projection, projectionIndex) => {
           const projectionLabel = `${label}.fixed_turn_cost_estimate.projections[${projectionIndex}]`;
           const record = jsonRecord(projection, projectionLabel);

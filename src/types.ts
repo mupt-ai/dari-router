@@ -214,6 +214,10 @@ export type TurnCostProjection = {
 export type FixedTurnCostEstimate = {
   output_tokens_per_turn: number;
   assumed_reasoning_effort: ReasoningEffort;
+  // Cost of the first turn if this action's cache is cold: what switching to
+  // it pays before its prompt prefix is warm. Projections are cumulative and
+  // cannot isolate it.
+  cold_start_usd: number;
   // Cumulative loop cost at each horizon in FIXED_TURN_COST_PROJECTED_TURNS,
   // ascending by turn count.
   projections: TurnCostProjection[];

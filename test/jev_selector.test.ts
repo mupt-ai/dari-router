@@ -87,6 +87,7 @@ function selectorInput(overrides: Partial<SelectorInput> = {}): SelectorInput {
       fixed_turn_cost_estimate: {
         output_tokens_per_turn: 500,
         assumed_reasoning_effort: candidate.reasoningEffort,
+        cold_start_usd: 0,
         projections: [5, 10, 30].map((turns) => ({
           projected_turns: turns,
           total_cost_usd: 0.03 * turns * (3 - index),
