@@ -16,6 +16,10 @@
 - Lease history records prior actions, turns, errors, tool results, and tests. 
 - Action labels remain fixed; the Model line identifies each historical action. Labels sharing a letter (A:high, A:low) are one model at different thinking levels with a shared prompt cache. 
 
+## Escalate when the user is dissatisfied
+- Consider the full conversation, not just the latest task. If the user is clearly dissatisfied with the quality of prior work—for example, pointing out repeated mistakes, inadequate reasoning, or failure to follow instructions—upgrade to a more capable model when one is available. Escalate by as many intelligence levels as needed to address the dissatisfaction; do not limit the upgrade to one level.
+- Do not treat routine follow-up requests or changes in preference as dissatisfaction. If no more capable model is available, choose the best available action; do not assume an unavailable upgrade.
+
 ## Switching and cache
 - Switching changes the model, not the available conversation: the selected model will ALWAYS receives the context above. 
 - Cache warmth affects cost and latency only. 
